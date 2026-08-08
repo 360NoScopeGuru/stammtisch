@@ -104,7 +104,9 @@ Four scripts, none of which need a microphone:
 | `test_segments.py` | segmentation, guillemet-aware splitting, merging | nothing |
 | `test_langid.py` | language classification + every real routing regression | nothing |
 | `test_intents.py` | mode-switch detection, including false positives | nothing |
+| `test_corrections.py` | name protection, and the corrections that must survive it | nothing |
 | `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
+| `test_persistence.py` | session survives `kill -9` mid-conversation | nothing |
 | `test_web.py` | WebSocket delivery, backlog replay, controls | nothing |
 | `test_pipeline.py` | Piper → VAD → Whisper round trip, both voices | models |
 | `test_prompt.py` | whether the live model obeys the prompt contract | LLM |
@@ -135,7 +137,12 @@ fails at preflight with `cannot reach http://localhost:11434/v1`.
 
 Talk. Stop talking. It replies. `Ctrl+C` ends the session and prints your review.
 
-Sessions are written to `sessions/` as JSON plus an Anki-importable CSV.
+Sessions are written to `sessions/` as JSON plus an Anki-importable CSV, **after
+every turn**. This used to happen only on a clean shutdown, which meant it never
+happened at all: the app is normally ended with Ctrl+C or by closing the console,
+so `sessions/` stayed empty after every real session and the review and Anki
+export had never once produced a file. Writes are atomic, so a kill landing
+mid-write cannot leave a half-parsed session behind.
 
 ## The web UI
 
@@ -234,6 +241,59 @@ heard: "Bamsi Taran ist ein bisschen komisch"
 
 which then reached the corrector, which duly "corrected" a phrase the learner
 never said. Corrections now only run when the utterance was actually German.
+
+Auto-detect is **restricted to `stt.detect_languages`** (`[de, en]`). Left
+unrestricted it is far worse than it looks. From one real session's log:
+
+```
+ur 0.60   zh 0.53   ur 0.40   it 0.40   ur 0.43   ur 0.72   ar 0.90   id 0.49
+```
+
+Seven of twenty-one utterances came back as Urdu, Chinese, Arabic, Italian or
+Indonesian — and were transcribed as such, so the tutor spent those turns
+replying to gibberish. Note the confidences: 0.30, 0.37, 0.40. It was guessing.
+Two seconds of an accented beginner is not enough signal to choose among 99
+languages, but it is plenty to choose between two.
+
+The restriction is nearly free. The first pass already computes the full
+distribution, so a second pass runs only when the global argmax falls outside
+the candidate set — exactly the case that was producing garbage anyway.
+
+`scripts/probe_langdetect.py` measures this. Be aware that Piper's German is too
+clean to reproduce the failure: synthesized speech is detected correctly even
+when deliberately wrecked with noise and pitch shifting. The evidence for the
+restriction comes from production logs, not from synthetic audio — which is
+also why `test_pipeline.py` was passing throughout.
+
+## Corrections never touch names
+
+The corrector is a small local model, good at case endings and bad at knowing
+what a name is. From a real session:
+
+```
+heard:      "Ich heiße Fahmshidharan."
+corrected:  "Ich heiße Farshid Shidharan."
+```
+
+The learner said their own name correctly; Whisper mangled the spelling, and the
+corrector "fixed" the mangling into a different name and presented it as a
+German error.
+
+Prompting alone cannot fix this — the model cannot distinguish a name it has
+never seen from a misspelled noun. So `app/corrections.py` drops any correction
+that changes a proper noun, using `learner.name` from `config.yaml` plus
+anything following a naming verb («heiße», «Mein Name ist …»).
+
+The filter is deliberately narrow, because dropping a genuine correction is
+invisible — the learner simply never finds out they were wrong. Real manglings
+of a name score 0.36–1.00 against it; ordinary German words that appear in
+genuine corrections reach 0.55 («waren», «Name»). The fuzzy threshold sits at
+0.60, above the noise, and the exact naming-verb rules do the real work.
+`scripts/test_corrections.py` pins both directions, including the cases that
+must **not** be filtered, like «Ich bin Student» → «Studentin».
+
+**Set `learner.name` in `config.yaml`** to whatever you actually say when you
+introduce yourself.
 
 ## The echo guard
 

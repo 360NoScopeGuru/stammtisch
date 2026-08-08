@@ -26,6 +26,10 @@ stt:
   language: de
   beam_size: 1              # greedy — beam search costs latency for little gain here
   vad_filter: false         # we already gate with Silero upstream
+  # Mentor mode auto-detects, but only between these. Unrestricted, Whisper
+  # labelled a third of one real session Urdu/Arabic/Chinese and transcribed
+  # it as such. Two seconds of accented speech cannot pick from 99 languages.
+  detect_languages: [de, en]
 
 llm:
   # Any OpenAI-compatible server: Ollama (11434), LM Studio (1234), llama.cpp (8080).
@@ -70,3 +74,12 @@ tutor:
   # transcript-similarity echo guard as a backstop either way, but on speakers
   # this is best left off.
   barge_in: false
+
+learner:
+  # Your name, so the grammar corrector leaves it alone. Whisper mangles names
+  # badly ("Vamshee" came back as Fahmshidharan, Wamsi, Wanzi in one session)
+  # and the corrector then "fixes" the mangling into a different name and
+  # reports it as a German mistake. Set this to whatever you actually say when
+  # you introduce yourself.
+  name: Vamshee Dharan
+  native_language: English
