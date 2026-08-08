@@ -6,9 +6,11 @@ import csv
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TextIO
 
 from .config import Config
 
@@ -128,7 +130,7 @@ class SessionLog:
         lines.append("─" * 58)
         return "\n".join(lines)
 
-    def _write_atomic(self, path: Path, write: "callable") -> None:
+    def _write_atomic(self, path: Path, write: Callable[[TextIO], None]) -> None:
         """Write via a temp file and rename.
 
         Called after every turn, so a kill landing mid-write is a real
