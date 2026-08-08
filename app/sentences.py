@@ -25,6 +25,26 @@ _TERMINATORS = ".!?…"
 _BOUNDARY = re.compile(rf"[{re.escape(_TERMINATORS)}]+[\"'»«)\]]*(?=\s|$)")
 _TRAILING_WORD = re.compile(r"([\wäöüÄÖÜß.]+)\.$")
 
+# German phrases arrive wrapped in guillemets («…»). Splitting inside one would
+# hand half a phrase to the German voice and half to the English voice, so a
+# boundary inside an unclosed guillemet is not a boundary.
+_MAX_UNCLOSED = 400  # give up waiting for a » that is never coming
+
+
+def _continues_after_quote(rest: str) -> bool | None:
+    """Does the sentence carry on past a closing guillemet?
+
+    A quoted phrase keeps its own terminator ("«Guten Tag!» means hello."), so
+    the terminator before » is not reliable evidence that the sentence ended.
+    A lowercase word after the quote means the sentence is still going.
+
+    Returns None when there is not enough text yet to decide.
+    """
+    rest = rest.lstrip()
+    if not rest:
+        return None
+    return rest[0].islower()
+
 
 def _is_false_boundary(text: str) -> bool:
     """True if `text` ends at an abbreviation or a bare digit, not a sentence."""
@@ -71,6 +91,18 @@ class SentenceStreamer:
                 candidate = self._buf[: m.end()]
                 if _is_false_boundary(candidate):
                     continue
+                if (
+                    candidate.count("«") > candidate.count("»")
+                    and len(self._buf) < _MAX_UNCLOSED
+                ):
+                    continue  # mid-quote; wait for the closing guillemet
+
+                if candidate.rstrip().endswith("»"):
+                    cont = _continues_after_quote(self._buf[m.end():])
+                    if cont is None or cont:
+                        # None: need more text to tell. True: sentence goes on.
+                        continue
+
                 match = m
                 break
 

@@ -15,7 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from . import prompts, scenarios
+from . import prompts, scenarios, segments
 from .audio_io import MicListener, Speaker
 from .config import Config
 from .events import EventBus
@@ -52,6 +52,10 @@ class Tutor:
 
         self._pending: set[asyncio.Task] = set()
 
+    @property
+    def mode(self) -> str:
+        return self.cfg.tutor.mode
+
     # ---- setup --------------------------------------------------------
 
     async def preflight(self) -> None:
@@ -65,8 +69,8 @@ class Tutor:
         log.info("warm in %.1fs", time.perf_counter() - t0)
 
     def _messages(self) -> list[dict[str, str]]:
-        system = prompts.tutor_system_prompt(
-            self.cfg.tutor.level, self.scenario.description
+        system = prompts.system_prompt(
+            self.mode, self.cfg.tutor.level, self.scenario.description
         )
         keep = self.cfg.tutor.history_turns * 2
         return [{"role": "system", "content": system}, *self.history[-keep:]]
@@ -74,10 +78,21 @@ class Tutor:
     # ---- speaking -----------------------------------------------------
 
     async def _speak(self, text: str) -> None:
-        """Synthesize and enqueue one sentence, off the event loop thread."""
-        pcm = await asyncio.to_thread(self.tts.synthesize, text)
-        if len(pcm):
-            self.speaker.play(pcm)
+        """Synthesize one sentence, routing each language to its own voice.
+
+        In mentor mode a single sentence is often mixed — English prose with a
+        German phrase inside guillemets — so it may become several segments.
+        """
+        # Guillemets mean German; everything outside them is English, in both
+        # modes. Practice-mode replies routinely carry parenthetical glosses
+        # ("«Hallo!» (Hello!)") and reading those with German phonetics
+        # produces gibberish.
+        for lang, chunk in segments.split_segments(text, segments.EN):
+            if self.mic.interrupted.is_set():
+                return
+            pcm = await asyncio.to_thread(self.tts.synthesize, chunk, lang)
+            if len(pcm):
+                self.speaker.play(pcm)
 
     async def say(self, text: str) -> None:
         """Speak a fixed line (openers, errors). Not streamed."""
@@ -103,21 +118,32 @@ class Tutor:
         self.speaker.resume()
         self.mic.tutor_speaking.set()
 
+        async def emit(sentence: str) -> None:
+            """Strip any mode token, then speak what remains."""
+            nonlocal first_audio_ms
+            # Strip any stray mode token so it is never read aloud. We do not
+            # act on it — see the note in prompts.py.
+            clean, stray = segments.extract_mode(sentence)
+            if stray:
+                log.debug("stripped stray mode token (%s) from reply", stray)
+            if not clean:
+                return
+            if first_audio_ms is None:
+                first_audio_ms = (time.perf_counter() - t0) * 1000
+            spoken.append(clean)
+            await self._speak(clean)
+
         try:
             async for delta in self.llm.stream(self._messages()):
                 if self.mic.interrupted.is_set():
                     log.info("cutting generation — user interrupted")
                     break
                 for sentence in streamer.feed(delta):
-                    if first_audio_ms is None:
-                        first_audio_ms = (time.perf_counter() - t0) * 1000
-                    spoken.append(sentence)
-                    await self._speak(sentence)
+                    await emit(sentence)
 
             if not self.mic.interrupted.is_set():
                 for sentence in streamer.flush():
-                    spoken.append(sentence)
-                    await self._speak(sentence)
+                    await emit(sentence)
                 await asyncio.to_thread(self.speaker.wait_until_done, 60.0)
             else:
                 self.speaker.cancel()
@@ -175,7 +201,7 @@ class Tutor:
             return False
         self.cfg.tutor.level = level
         # History stays: the tutor simply adapts its register from here on.
-        self.bus.publish("config", level=level, scenario=self.scenario.key)
+        self._publish_config()
         log.info("level -> %s", level)
         return True
 
@@ -185,9 +211,28 @@ class Tutor:
         self.scenario = scenarios.get(key)
         self.cfg.tutor.scenario = key
         self.history.clear()  # a new roleplay is a new conversation
-        self.bus.publish("config", level=self.cfg.tutor.level, scenario=key)
+        self._publish_config()
         log.info("scenario -> %s", key)
         return True
+
+    def set_mode(self, mode: str) -> bool:
+        mode = mode.lower()
+        if mode not in (prompts.MENTOR, prompts.PRACTICE) or mode == self.mode:
+            return False
+        self.cfg.tutor.mode = mode
+        # History carries over deliberately: switching to practice right after
+        # being taught a phrase should let the tutor use that phrase.
+        self._publish_config()
+        log.info("mode -> %s", mode)
+        return True
+
+    def _publish_config(self) -> None:
+        self.bus.publish(
+            "config",
+            mode=self.mode,
+            level=self.cfg.tutor.level,
+            scenario=self.scenario.key,
+        )
 
     # ---- lifecycle ----------------------------------------------------
 

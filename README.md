@@ -1,8 +1,28 @@
 # Stammtisch
 
-A local German conversation partner. Speak German, get spoken German back, get
-your mistakes reviewed afterwards. Everything runs on your own GPU — no API keys,
-no subscription, no audio leaving the machine.
+A local German tutor you talk to out loud. It teaches in English, practises in
+German, and reviews your mistakes afterwards. Everything runs on your own GPU —
+no API keys, no subscription, no audio leaving the machine.
+
+## Two modes
+
+**Mentor** (the default) is a teacher. It explains in English, introduces German
+a piece at a time, and asks you to say things back:
+
+> That's a good place to start. «Guten Morgen» means "good morning" — try saying
+> it back to me.
+
+**Practice** is immersion. It stays in German and behaves like a conversation
+partner rather than a teacher, correcting nothing out loud.
+
+Say "can we practise now?" and it switches; say "I don't understand" or "explain
+that" and it comes back. There are also buttons in the UI. Switching is decided
+by `app/intents.py` reading your transcript, **not** by the model — see
+[Mode switching](#mode-switching) for why.
+
+Each language gets its own Piper voice, routed per phrase. A German voice
+reading English produces gibberish, so the model marks German with guillemets
+(`«…»`) and each fragment goes to the matching voice.
 
 ## How it works
 
@@ -60,20 +80,30 @@ Four scripts, none of which need a microphone:
 | Script | Covers | Needs |
 |---|---|---|
 | `test_sentences.py` | streaming sentence splitter, German abbreviations | nothing |
+| `test_segments.py` | language routing, guillemet-aware splitting | nothing |
+| `test_intents.py` | mode-switch detection, including false positives | nothing |
 | `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
 | `test_web.py` | WebSocket delivery, backlog replay, controls | nothing |
-| `test_pipeline.py` | Piper → VAD → Whisper round trip | models |
+| `test_pipeline.py` | Piper → VAD → Whisper round trip, both voices | models |
+| `test_prompt.py` | whether the live model obeys the prompt contract | LLM |
 
 `test_pipeline.py` synthesizes German with Piper, pushes it through the VAD, and
 transcribes it with Whisper. If it prints `PASS`, only the LLM server is left to
 check.
 
+`test_prompt.py` is worth running whenever you change models. It asks the live
+LLM for one mentor turn and one practice turn, then checks the things the audio
+pipeline depends on: German wrapped in guillemets, no English inside them, no
+markdown leaking into speech, replies short enough to speak. A model that fails
+these will sound broken in ways that are hard to trace back from audio.
+
 ## Run
 
 ```powershell
-python main.py                                  # terminal session, B1
+python main.py                                  # terminal, mentor mode, A1
 python main.py --web                            # browser UI at :8420
-python main.py --scenario baeckerei --level A2
+python main.py --mode practice --level A2       # skip straight to German
+python main.py --scenario baeckerei
 python main.py --list-scenarios
 python main.py --list-devices                   # if the wrong mic is picked up
 ```
@@ -117,8 +147,29 @@ The knobs that actually matter, in `config.yaml`:
 | `vad.end_silence_ms` | **The main latency dial.** 450 ms is responsive; raise to 700+ if it cuts you off mid-thought. |
 | `vad.threshold` | Raise toward 0.7 in a noisy room. |
 | `tts.length_scale` | 1.15–1.3 makes the tutor speak slower. Good at A1/A2. |
+| `tutor.mode` | `mentor` teaches in English; `practice` is German immersion. |
+| `tts.voices` | One Piper voice per language. Swap `en` for `en_GB-alba-medium` if you prefer British English. |
 | `llm.max_tokens` | Keep it low. Long tutor turns kill conversation flow. |
 | `stt.model` | Drop to `distil-large-v3` or `medium` if VRAM gets tight. |
+
+## Mode switching
+
+Switching between teaching and practice is driven by a small regex layer over
+your transcript (`app/intents.py`), not by the LLM.
+
+The original design asked the model to emit a `[[PRACTICE]]` token. `gemma3:12b`
+failed that in both directions: it ignored a direct *"can we practise now
+please?"*, and once the instruction was strengthened it emitted the token
+unprompted in reply to *"I want to learn how to introduce myself"* — which would
+have dropped a beginner into roleplay before being taught anything.
+
+Since the request is nearly always stated in plain words, reading the transcript
+is both cheaper and more reliable. The detector is deliberately conservative:
+missing a switch is a minor annoyance, but a false switch yanks you out of a
+lesson mid-sentence. `scripts/test_intents.py` covers both directions, including
+near-misses like *"I practise German every day"* that must **not** trigger.
+
+Stray tokens are still stripped from replies so they can never be read aloud.
 
 ## The echo guard
 

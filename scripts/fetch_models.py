@@ -21,11 +21,14 @@ SILERO = (
 )
 
 VOICES = {
-    # key: (path under the piper-voices repo, quality dir)
+    # voice name -> path under the piper-voices repo
     "de_DE-thorsten-high": "de/de_DE/thorsten/high/de_DE-thorsten-high",
     "de_DE-thorsten-medium": "de/de_DE/thorsten/medium/de_DE-thorsten-medium",
     "de_DE-eva_k-x_low": "de/de_DE/eva_k/x_low/de_DE-eva_k-x_low",
     "de_DE-kerstin-low": "de/de_DE/kerstin/low/de_DE-kerstin-low",
+    "en_US-lessac-medium": "en/en_US/lessac/medium/en_US-lessac-medium",
+    "en_US-amy-medium": "en/en_US/amy/medium/en_US-amy-medium",
+    "en_GB-alba-medium": "en/en_GB/alba/medium/en_GB-alba-medium",
 }
 
 
@@ -43,16 +46,17 @@ def download(url: str, dest: Path) -> None:
 
 def main() -> int:
     cfg = load_config()
-    voice = cfg.tts.voice
-    if voice not in VOICES:
-        print(f"Unknown voice {voice!r}. Known: {', '.join(VOICES)}")
-        return 2
-
     out = cfg.models_root / "piper"
-    print(f"Piper voice -> {out}")
-    stem = VOICES[voice]
-    download(f"{HF}/{stem}.onnx", out / f"{voice}.onnx")
-    download(f"{HF}/{stem}.onnx.json", out / f"{voice}.onnx.json")
+    print(f"Piper voices -> {out}")
+
+    for lang, voice in cfg.tts.voices.items():
+        if voice not in VOICES:
+            print(f"Unknown voice {voice!r} for {lang}. Known: {', '.join(VOICES)}")
+            return 2
+        stem = VOICES[voice]
+        print(f"  [{lang}] {voice}")
+        download(f"{HF}/{stem}.onnx", out / f"{voice}.onnx")
+        download(f"{HF}/{stem}.onnx.json", out / f"{voice}.onnx.json")
 
     vad_dir = cfg.models_root / "vad"
     print(f"Silero VAD -> {vad_dir}")

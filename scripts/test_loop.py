@@ -55,7 +55,8 @@ class FakeTutor:
         self.cfg = cfg
         self.bus = bus
         self.scenario = types.SimpleNamespace(
-            key="baeckerei", title="Bakery", opener="Guten Morgen!"
+            key="baeckerei", title="Bakery",
+            opener="Guten Morgen!", intro="Today we go to the bakery.",
         )
         self.mic = FakeMic()
         self.speaker = FakeSpeaker()
@@ -69,7 +70,19 @@ class FakeTutor:
         self.spoken: list[str] = []
         self.corrected: list[str] = []
         self.level_changes: list[str] = []
+        self.mode_changes: list[str] = []
         self.fail_next = False
+
+    @property
+    def mode(self):
+        return self.cfg.tutor.mode
+
+    def set_mode(self, v):
+        if v == self.cfg.tutor.mode:
+            return False
+        self.mode_changes.append(v)
+        self.cfg.tutor.mode = v
+        return True
 
     async def preflight(self):
         pass
@@ -145,7 +158,11 @@ async def scenario_basic(cfg):
     kinds = [e["type"] for e in events]
     return {
         "mic started": tutor.mic.started,
-        "opener spoken": tutor.spoken and tutor.spoken[0] == "Guten Morgen!",
+        # Default mode is mentor, so the greeting is the English intro. The
+        # German opener belongs to practice mode.
+        "opener spoken in the mode's language": (
+            bool(tutor.spoken) and tutor.spoken[0] == "Today we go to the bakery."
+        ),
         "user_turn emitted": kinds.count("user_turn") == 2,
         "tutor_turn emitted": kinds.count("tutor_turn") == 2,  # opener + 1 reply
         "correction queued per utterance": len(tutor.corrected) == 2,
@@ -220,6 +237,43 @@ async def scenario_no_barge_in(cfg):
     }
 
 
+async def scenario_mode_handoff(cfg):
+    """Asking to practise switches modes after the turn finishes speaking.
+
+    The switch is driven by the learner's transcript, not by the model.
+    """
+    cfg.tutor.mode = "mentor"
+    bus = EventBus()
+    tutor = FakeTutor(cfg, bus, ["Can we practise now please?", "Hallo."])
+    tutor.reply_delay = 0.15
+    runner = ConversationRunner(tutor, bus)
+    events: list[dict] = []
+    collector = asyncio.create_task(collect(bus, events))
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.sleep(0.05)
+    tutor.mic.q.put_nowait(np.zeros(1600, dtype=np.float32))
+    await asyncio.sleep(0.4)
+
+    switched_after_reply = tutor.spoken.index("Antwort auf: Can we practise now "
+                                              "please?") < len(tutor.spoken) - 1
+
+    runner.request_stop()
+    await asyncio.wait_for(task, timeout=3)
+    collector.cancel()
+
+    kinds = [e["type"] for e in events]
+    return {
+        "practice request switches mode": tutor.mode_changes == ["practice"],
+        "mode_changed event published": "mode_changed" in kinds,
+        "switch happens after the reply, not during": switched_after_reply,
+        # Entering practice mode greets in German, marked for the German voice.
+        "new-mode opener spoken in German": any(
+            "Guten Morgen" in s for s in tutor.spoken
+        ),
+    }
+
+
 def scenario_echo_guard(cfg):
     """Similarity guard: reject own speech, keep genuine user turns.
 
@@ -252,7 +306,7 @@ def scenario_echo_guard(cfg):
 async def main() -> int:
     failures = 0
     for fn in (scenario_basic, scenario_control, scenario_no_barge_in,
-               scenario_echo_guard):
+               scenario_mode_handoff, scenario_echo_guard):
         cfg = load_config()  # fresh config per scenario
         print(f"\n{fn.__name__}:")
         try:

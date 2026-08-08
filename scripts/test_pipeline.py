@@ -27,16 +27,7 @@ PHRASES = [
 ]
 
 
-def resample_linear(x: np.ndarray, src: int, dst: int) -> np.ndarray:
-    """Good enough to feed a VAD; not hi-fi."""
-    if src == dst:
-        return x
-    n = int(round(len(x) * dst / src))
-    return np.interp(
-        np.linspace(0, len(x) - 1, n, dtype=np.float64),
-        np.arange(len(x), dtype=np.float64),
-        x,
-    ).astype(np.float32)
+from app.tts import resample_linear  # noqa: E402
 
 
 def main() -> int:
@@ -48,11 +39,30 @@ def main() -> int:
     t0 = time.perf_counter()
     tts = Synthesizer(cfg)
     print(f"      loaded in {time.perf_counter() - t0:.1f}s")
+    print(f"      voices: {{k: v.name for k, v in tts.voices.items()}}"
+          .replace("{k: v.name for k, v in tts.voices.items()}",
+                   str({k: v.name for k, v in tts.voices.items()})))
+
+    # Mentor mode mixes languages inside one sentence; each piece must reach
+    # the right voice and the pieces must concatenate at one sample rate.
+    print("\n      mixed-language routing:")
+    from app.segments import EN, split_segments
+    mixed = 'Try saying «Ich heiße Anna», which means "my name is Anna".'
+    total = 0
+    for lang, chunk in split_segments(mixed, EN):
+        pcm = tts.synthesize(chunk, lang)
+        total += len(pcm)
+        status = "OK  " if len(pcm) else "FAIL"
+        ok &= bool(len(pcm))
+        print(f"      {status}  [{lang}] {len(pcm) / tts.sample_rate * 1000:5.0f} ms  "
+              f"{chunk[:40]}")
+    print(f"            total {total / tts.sample_rate * 1000:.0f} ms at "
+          f"{tts.sample_rate} Hz")
 
     clips = []
     for text in PHRASES:
         t0 = time.perf_counter()
-        pcm = tts.synthesize(text)
+        pcm = tts.synthesize(text, "de")
         gen_ms = (time.perf_counter() - t0) * 1000
         dur_ms = len(pcm) / cfg.tts.sample_rate * 1000
         if len(pcm) == 0:
@@ -70,7 +80,7 @@ def main() -> int:
                     cfg.audio.input_sample_rate)
     vad_ready = []
     for text, pcm in clips:
-        mono16k = resample_linear(pcm, cfg.tts.sample_rate,
+        mono16k = resample_linear(pcm, tts.sample_rate,
                                   cfg.audio.input_sample_rate)
         vad.reset()
         probs = [
