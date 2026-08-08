@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from . import prompts, scenarios, segments
 from .audio_io import MicListener, Speaker
 from .config import Config
+from .corrections import filter_corrections
 from .events import EventBus
 from .llm import LlmClient
 from .review import SessionLog
@@ -186,13 +187,23 @@ class Tutor:
         task.add_done_callback(self._pending.discard)
 
     async def _correct(self, user_text: str) -> None:
+        name = self.cfg.learner.name
         result = await self.llm.complete_json(
-            prompts.corrector_messages(self.cfg.tutor.level, user_text)
+            prompts.corrector_messages(self.cfg.tutor.level, user_text, name)
         )
         if not result:
             return
         corrections = [c for c in result.get("corrections", []) if isinstance(c, dict)]
         vocab = [v for v in result.get("vocab", []) if isinstance(v, str)]
+
+        # The prompt asks the model to leave names alone; it does not always
+        # listen, and it cannot recognise a name it has never seen. Enforce it
+        # here, where the check is deterministic.
+        corrections, dropped = filter_corrections(corrections, name, user_text)
+        for c in dropped:
+            log.info("dropped correction (proper noun or no-op): %r -> %r",
+                     c.get("original"), c.get("corrected"))
+
         self.session.add_feedback(user_text, corrections, vocab)
         for c in corrections:
             log.info("correction: %r -> %r", c.get("original"), c.get("corrected"))
@@ -256,4 +267,7 @@ class Tutor:
         self.mic.stop()
         self.speaker.close()
         await self.llm.aclose()
-        self.session.save()
+        # The session has been on disk since the first turn; this final pass
+        # just folds in any correction that landed during the gather above.
+        if saved := self.session.save():
+            log.info("session saved: %s", saved[0])

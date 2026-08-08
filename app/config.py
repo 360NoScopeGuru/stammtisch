@@ -46,6 +46,10 @@ class SttCfg:
     language: str = "de"
     beam_size: int = 1
     vad_filter: bool = False
+    # The only languages the learner can plausibly be speaking. Unrestricted
+    # auto-detect picked Urdu, Arabic, Chinese, Italian and Indonesian on a
+    # third of one real session's utterances — see Transcriber.transcribe.
+    detect_languages: list[str] = field(default_factory=lambda: ["de", "en"])
 
 
 @dataclass
@@ -90,6 +94,14 @@ class TutorCfg:
 
 
 @dataclass
+class LearnerCfg:
+    """Who is being taught. Currently just the name, which the corrector needs
+    in order to leave it alone — see app/corrections.py."""
+    name: str = ""
+    native_language: str = "English"
+
+
+@dataclass
 class Config:
     paths: PathsCfg = field(default_factory=PathsCfg)
     audio: AudioCfg = field(default_factory=AudioCfg)
@@ -98,6 +110,7 @@ class Config:
     llm: LlmCfg = field(default_factory=LlmCfg)
     tts: TtsCfg = field(default_factory=TtsCfg)
     tutor: TutorCfg = field(default_factory=TutorCfg)
+    learner: LearnerCfg = field(default_factory=LearnerCfg)
 
     @property
     def models_root(self) -> Path:
@@ -125,6 +138,7 @@ def load_config(path: str | Path | None = None) -> Config:
     sections = {
         "paths": PathsCfg, "audio": AudioCfg, "vad": VadCfg, "stt": SttCfg,
         "llm": LlmCfg, "tts": TtsCfg, "tutor": TutorCfg,
+        "learner": LearnerCfg,
     }
     kwargs = {name: _build(cls, raw.get(name) or {}) for name, cls in sections.items()}
     return Config(**kwargs)

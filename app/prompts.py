@@ -140,6 +140,10 @@ Find real language errors: grammar, word order, case, gender, word choice.
 Important:
 - Ignore punctuation and capitalisation.
 - Ignore likely speech-recognition artefacts.
+- NEVER correct a person's name, a place name or any other proper noun.{name}
+Speech recognition mangles names constantly, and a "corrected" name is not a \
+German lesson — it is you inventing a different person. If the only thing \
+wrong with a sentence is the spelling of a name, return no corrections.
 - If the learner spoke English, or the utterance is already correct, return an \
 empty corrections list.
 - Do not invent errors. Reporting nothing is better than reporting something \
@@ -163,8 +167,17 @@ def system_prompt(mode: str, level: str, scenario_description: str) -> str:
     )
 
 
-def corrector_messages(level: str, utterance: str) -> list[dict[str, str]]:
+def corrector_messages(
+    level: str, utterance: str, learner_name: str = ""
+) -> list[dict[str, str]]:
+    # Naming the learner is the single most useful thing we can tell the
+    # corrector, because their own name is the proper noun it will meet most
+    # often and mangle worst.
+    name = (f" The learner is called {learner_name}, so any word resembling "
+            f"that is their name, however oddly it is spelled."
+            if learner_name.strip() else "")
     return [
-        {"role": "system", "content": CORRECTOR_SYSTEM.format(level=level.upper())},
+        {"role": "system",
+         "content": CORRECTOR_SYSTEM.format(level=level.upper(), name=name)},
         {"role": "user", "content": utterance},
     ]
