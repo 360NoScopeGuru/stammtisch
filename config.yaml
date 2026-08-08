@@ -40,15 +40,23 @@ llm:
   corrector_temperature: 0.1
 
 tts:
-  voice: de_DE-thorsten-high
-  sample_rate: 22050        # must match the voice's ONNX config
-  length_scale: 1.0         # >1.0 = slower speech. Bump to 1.15 for A1/A2 learners.
+  # One voice per language — the mentor speaks English with German examples,
+  # and each voice mangles the other's language if given the wrong text.
+  voices:
+    de: de_DE-thorsten-high
+    en: en_US-lessac-medium
+  primary: de               # this voice's sample rate drives the output stream
+  sample_rate: 22050        # overwritten at load from the primary voice
+  length_scale: 1.1         # >1.0 = slower speech. Helpful at A1/A2.
   noise_scale: 0.667
   noise_w: 0.8
 
 tutor:
-  level: B1                 # CEFR: A1 A2 B1 B2 C1
-  scenario: freies_gespraech
+  # mentor   = teaches in English, German examples in «guillemets»
+  # practice = German immersion, conversation partner
+  mode: mentor
+  level: A1                 # CEFR: A1 A2 B1 B2 C1
+  scenario: grundlagen
   history_turns: 12         # conversation turns kept in context
   # Let the user interrupt the tutor mid-sentence. Requires headphones: with
   # laptop speakers the tutor hears itself and interrupts itself. There is a

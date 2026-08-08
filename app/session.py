@@ -15,6 +15,9 @@ import time
 
 from . import scenarios
 from .events import EventBus
+from .intents import requested_mode
+from .prompts import MENTOR, PRACTICE
+from .segments import strip_markers
 from .tutor import Tutor
 
 log = logging.getLogger(__name__)
@@ -72,6 +75,7 @@ class ConversationRunner:
     def _publish_config(self) -> None:
         self.bus.publish(
             "config",
+            mode=self.tutor.mode,
             level=self.tutor.cfg.tutor.level,
             scenario=self.tutor.scenario.key,
             scenarios=[
@@ -82,11 +86,20 @@ class ConversationRunner:
         )
 
     async def _speak_opener(self) -> None:
-        opener = self.tutor.scenario.opener
+        """Greet in the current mode's language: English to teach, German to
+        practise."""
+        sc = self.tutor.scenario
+        if self.tutor.mode == PRACTICE:
+            opener = f"«{sc.opener}»"   # marked so it routes to the German voice
+        else:
+            opener = sc.intro
+
         self.bus.publish("status", state=SPEAKING)
         await self.tutor.say(opener)
-        self._mark_spoken(opener)
-        self.tutor.session.add_turn("assistant", opener)
+
+        plain = strip_markers(opener)
+        self._mark_spoken(plain)
+        self.tutor.session.add_turn("assistant", plain)
         self.bus.publish("tutor_turn", text=opener, latency_ms=None, opener=True)
 
     def _mark_spoken(self, text: str) -> None:
@@ -112,8 +125,17 @@ class ConversationRunner:
             if self.tutor.set_scenario(str(msg.get("value", ""))):
                 self.bus.publish("scenario_changed", scenario=self.tutor.scenario.key)
                 await self._speak_opener()
+        elif action == "set_mode":
+            await self._switch_mode(str(msg.get("value", "")))
         elif action == "stop":
             self.request_stop()
+
+    async def _switch_mode(self, mode: str) -> None:
+        """Change mode and greet in the new one, so the switch is audible."""
+        if not self.tutor.set_mode(mode):
+            return
+        self.bus.publish("mode_changed", mode=self.tutor.mode)
+        await self._speak_opener()
 
     async def _drain_controls(self) -> None:
         while not self.controls.empty():
@@ -174,11 +196,22 @@ class ConversationRunner:
                 continue
 
             if turn.text:
-                self._mark_spoken(turn.text)
-                self.tutor.session.add_turn("assistant", turn.text, turn.latency_ms)
+                # Echo comparison works on what was actually spoken, so the
+                # guillemets have to come off first.
+                self._mark_spoken(strip_markers(turn.text))
+                self.tutor.session.add_turn(
+                    "assistant", strip_markers(turn.text), turn.latency_ms
+                )
                 self.bus.publish(
                     "tutor_turn", text=turn.text, latency_ms=turn.latency_ms
                 )
+
+            # Switch modes based on what the learner asked for, once the turn
+            # has finished speaking. Driven by the transcript rather than the
+            # model, which is not reliable enough — see prompts.py.
+            wanted = requested_mode(text, self.tutor.mode)
+            if wanted:
+                await self._switch_mode(wanted)
 
             await self._drain_controls()
 

@@ -61,8 +61,16 @@ class LlmCfg:
 
 @dataclass
 class TtsCfg:
-    voice: str = "de_DE-thorsten-high"
-    sample_rate: int = 22050
+    # One Piper voice per language. A German voice reading English (or the
+    # reverse) phonemises it with the wrong rules and comes out as gibberish.
+    voices: dict[str, str] = field(
+        default_factory=lambda: {
+            "de": "de_DE-thorsten-high",
+            "en": "en_US-lessac-medium",
+        }
+    )
+    primary: str = "de"       # its sample rate becomes the output stream rate
+    sample_rate: int = 22050  # overwritten at load from the primary voice
     length_scale: float = 1.0
     noise_scale: float = 0.667
     noise_w: float = 0.8
@@ -70,10 +78,11 @@ class TtsCfg:
 
 @dataclass
 class TutorCfg:
-    level: str = "B1"
-    scenario: str = "freies_gespraech"
+    mode: str = "mentor"      # "mentor" (teaches in English) or "practice"
+    level: str = "A1"
+    scenario: str = "grundlagen"
     history_turns: int = 12
-    barge_in: bool = True
+    barge_in: bool = False
 
 
 @dataclass

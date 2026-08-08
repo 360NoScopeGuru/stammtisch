@@ -25,6 +25,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Local German conversation practice")
     p.add_argument("--config", default=None)
     p.add_argument("--level", choices=["A1", "A2", "B1", "B2", "C1"])
+    p.add_argument("--mode", choices=["mentor", "practice"],
+                   help="mentor teaches in English; practice is German immersion")
     p.add_argument("--scenario")
     p.add_argument("--web", action="store_true", help="serve the browser UI")
     p.add_argument("--host", default="127.0.0.1")
@@ -42,7 +44,10 @@ async def print_events(bus: EventBus) -> None:
     while True:
         e = await q.get()
         t = e["type"]
-        if t in icons:
+        if t == "mode_changed":
+            label = "TEACHING (English)" if e["mode"] == "mentor" else "PRACTICE (German)"
+            print(f"\n  ── switched to {label} ──\n")
+        elif t in icons:
             tag = f"  ({e['latency_ms']:.0f} ms)" if e.get("latency_ms") else ""
             print(f"  {icons[t]} {e['text']}{tag}")
             if t == "tutor_turn":
@@ -63,8 +68,9 @@ async def run_cli(cfg) -> int:
     runner = ConversationRunner(tutor, bus)
     printer = asyncio.create_task(print_events(bus))
 
-    print(f"\n  Szenario: {tutor.scenario.title}  ·  Niveau: {cfg.tutor.level}")
-    print("  Sprich einfach los. Strg+C zum Beenden.\n")
+    mode_label = "mentor (English)" if cfg.tutor.mode == "mentor" else "practice (German)"
+    print(f"\n  {tutor.scenario.title}  ·  {cfg.tutor.level}  ·  {mode_label}")
+    print("  Just start talking. Ctrl+C to end.\n")
 
     try:
         await runner.run()
@@ -104,6 +110,8 @@ def main() -> int:
     cfg = load_config(args.config)
     if args.level:
         cfg.tutor.level = args.level
+    if args.mode:
+        cfg.tutor.mode = args.mode
     if args.scenario:
         if args.scenario not in scenarios.SCENARIOS:
             print(f"Unknown scenario {args.scenario!r}.\n{scenarios.listing()}")

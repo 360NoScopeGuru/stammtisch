@@ -37,11 +37,21 @@ class StubTutor:
         self.cfg = cfg
         self.bus = bus or EventBus()
         self.scenario = types.SimpleNamespace(
-            key="baeckerei", title="At the bakery", opener="Guten Morgen!"
+            key="baeckerei", title="At the bakery",
+            opener="Guten Morgen!", intro="Today we go to the bakery.",
         )
         self.session = StubSession()
         self.levels: list[str] = []
         self.scenarios: list[str] = []
+        self.modes: list[str] = []
+
+    @property
+    def mode(self):
+        return self.cfg.tutor.mode
+
+    def set_mode(self, v):
+        self.modes.append(v)
+        return False  # skip the opener path, which would need audio
 
     def set_level(self, v):
         self.levels.append(v)
@@ -141,6 +151,7 @@ def main() -> int:
                 # server has nothing queued and TestClient's recv blocks.
                 ws.send_json({"action": "set_level", "value": "B2"})
                 ws.send_json({"action": "set_scenario", "value": "arzttermin"})
+                ws.send_json({"action": "set_mode", "value": "practice"})
                 # Round-trip a publish to prove both sends were processed.
                 bus.publish("ping")
                 for _ in range(20):
@@ -159,6 +170,8 @@ def main() -> int:
                   f"got {tutor.levels}")
             check("set_scenario control reached the tutor",
                   "arzttermin" in tutor.scenarios, f"got {tutor.scenarios}")
+            check("set_mode control reached the tutor",
+                  "practice" in tutor.modes, f"got {tutor.modes}")
 
             # Bus must not wedge when a subscriber stops draining.
             q = bus.subscribe()
