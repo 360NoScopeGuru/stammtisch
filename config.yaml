@@ -4,6 +4,9 @@
 paths:
   models_root: D:/stammtisch-models
   sessions_dir: ./sessions
+  # Textbooks turned into a syllabus by scripts/ingest_textbook.py. Gitignored:
+  # the content is copyrighted and this repository is public.
+  courses_dir: ./courses
 
 audio:
   # Whisper wants 16 kHz mono. Piper emits at its own rate (see tts.sample_rate).
@@ -67,7 +70,12 @@ tutor:
   # practice = German immersion, conversation partner
   mode: mentor
   level: A1                 # CEFR: A1 A2 B1 B2 C1
-  scenario: grundlagen
+  scenario: grundlagen      # used only when chapter is 0
+  # Follow your own textbook. Ingest it first:
+  #   python scripts/ingest_textbook.py "path/to/book.pdf"
+  # Then set chapter to the one your class is on. 0 uses `scenario` instead.
+  course: ""                # file stem in paths.courses_dir; blank = the only one
+  chapter: 1
   history_turns: 12         # conversation turns kept in context
   # Let the user interrupt the tutor mid-sentence. Requires headphones: with
   # laptop speakers the tutor hears itself and interrupts itself. There is a

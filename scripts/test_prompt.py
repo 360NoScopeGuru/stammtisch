@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import prompts, scenarios  # noqa: E402
+from app import curriculum, prompts, scenarios  # noqa: E402
 from app.config import load_config  # noqa: E402
 from app.llm import LlmClient  # noqa: E402
 from app.langid import DE  # noqa: E402
@@ -137,6 +137,47 @@ async def main() -> int:
     # Soft check: immersion suffers if it translates everything it says.
     if en3.strip():
         print(f"  NOTE  practice mode still says some English: {en3[:90]!r}")
+
+    # --- teaching from the learner's own textbook ------------------------
+    # Skipped rather than failed when no course is ingested: the course is
+    # built from a copyrighted PDF the user supplies, so it will not exist on
+    # a fresh checkout.
+    course = curriculum.find(cfg.courses_path, cfg.tutor.course)
+    if course is None:
+        print("\n  SKIP  no course ingested — see scripts/ingest_textbook.py")
+    else:
+        chapter = course.get(3) or course.first()
+        sc = curriculum.as_scenario(chapter, "A1")
+        print(f"\ncourse mode ({sc.title}, should teach the book's material):")
+        messages = [
+            {"role": "system", "content": prompts.system_prompt(
+                prompts.MENTOR, "A1", sc.description,
+                reference=chapter.reference_extract())},
+            {"role": "user", "content": "Okay, let's begin."},
+        ]
+        reply4 = "".join([c async for c in client.stream(messages)]).strip()
+        print(f"\n  > {reply4}\n")
+        segs4 = show_routing(reply4, EN)
+        spoken4 = " ".join(t for _, t in segs4)
+
+        check("still obeys the speech rules with a reference attached",
+              not BAD_FOR_TTS.search(reply4),
+              f"found: {BAD_FOR_TTS.findall(reply4)[:5]}")
+        check("still short enough to speak", len(reply4) < 600,
+              f"{len(reply4)} chars")
+        check("the reference is not read out verbatim",
+              chapter.reference_extract()[:60] not in reply4,
+              "the tutor recited the grammar table instead of teaching")
+        # The point of a course is that the tutor teaches *this* chapter. A
+        # generic greeting lesson would pass any looser check while quietly
+        # ignoring the book, so this asks for the chapter's own vocabulary.
+        wanted = [t.lower() for t in chapter.topics]
+        wanted += [w.lower() for w in chapter.reference_extract().split()
+                   if len(w) > 4]
+        check("teaches this chapter rather than opening with greetings",
+              any(w in reply4.lower() for w in wanted),
+              f"reply mentions nothing from chapter {chapter.number} "
+              f"({', '.join(chapter.topics)}): {reply4[:120]!r}")
 
     await client.aclose()
     print(f"\n{'PASS' if not fails else 'FAIL'} — prompt contract\n")

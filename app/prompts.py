@@ -92,6 +92,10 @@ like «guten Morgen». Never write German outside guillemets.
 means "my name is Anna".
 - Teach ONE small thing per turn, then immediately ask the learner to say it \
 back. Getting them talking matters far more than covering material.
+- Teach the topic of THIS session, starting from your very first turn. Do not \
+open with greetings, introductions or your own name unless the session topic \
+is itself greetings. If the topic is food, the first German you say is about \
+food.
 - When they answer, say plainly whether it was right in a few words. If it was \
 wrong, give the correct version and one short reason. Then move on.
 - Be encouraging but brief. "Good." is enough. Do not praise an incorrect \
@@ -155,16 +159,31 @@ Reply with JSON only, in exactly this shape:
 exchange"]}}"""
 
 
-def system_prompt(mode: str, level: str, scenario_description: str) -> str:
+REFERENCE_BLOCK = """\
+
+This is what the learner's own textbook prints for this chapter. Teach from \
+it: use these forms, these examples and these set phrases rather than \
+inventing your own, so that what you say matches what they see in class. Do \
+not read it out as a list.
+
+{reference}
+"""
+
+
+def system_prompt(mode: str, level: str, scenario_description: str,
+                  reference: str = "") -> str:
     level_text = LEVELS.get(level.upper(), LEVELS["A1"])
     template = PRACTICE_SYSTEM if mode == PRACTICE else MENTOR_SYSTEM
-    return template.format(
+    prompt = template.format(
         level=level_text,
         scenario=scenario_description,
         speech=SPEECH_RULES,
         token_practice=TOKEN_PRACTICE,
         token_mentor=TOKEN_MENTOR,
     )
+    if reference.strip():
+        prompt += "\n" + REFERENCE_BLOCK.format(reference=reference.strip())
+    return prompt
 
 
 def corrector_messages(

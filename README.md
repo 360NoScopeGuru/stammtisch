@@ -39,6 +39,53 @@ conversation and a walkie-talkie.
 Corrections deliberately run *off* the critical path, after the turn. The tutor
 never interrupts you to correct grammar; mistakes surface in the session review.
 
+## Teaching from your own textbook
+
+Scenarios ("at the bakery", "office small talk") are fine for conversation but
+they are not a syllabus. Nothing says what comes first, nothing says when
+something has been learned, and a beginner ends up being taught whatever the
+model happens to think of next.
+
+You already have an order — your course book. Point Stammtisch at it:
+
+```powershell
+python scripts/ingest_textbook.py "path/to/Akademie Deutsch A1+ Band 1.pdf"
+python main.py --list-chapters
+python main.py --chapter 3
+```
+
+The tutor then teaches chapter 3, using chapter 3's vocabulary, chapter 3's
+grammar and the set phrases the book itself prints — so what you practise at
+home matches what your class is doing.
+
+```
+  1. LOS GEHT’S                      Personalpronomen, Verbkonjugation Präsens
+  2. DEUTSCHE SPRACHE, SCHWERE …     Artikel, Plural, Komposita
+  3. LECKER!                         Verben mit Akkusativobjekt, Nullartikel
+  ...
+```
+
+What gets extracted per chapter: the title and section titles, the topic
+keywords, the **can-do statements** (the book's own CEFR objectives), the
+grammar it introduces, and the end-of-chapter grammar summary, which is handed
+to the model as reference so it teaches the book's forms rather than inventing
+its own.
+
+The parse is heuristic — it is a PDF — so it is **checked structurally before
+anything is written**, and refuses to write on any doubt. This matters more
+than it sounds: an early version produced exactly the right number of chapters
+with every grammar list shifted one chapter along, so the food chapter was
+labelled with the previous chapter's articles and plurals. Counting things did
+not catch it. `scripts/test_curriculum.py` now pins the alignment, and
+`validate()` rejects any parse whose can-do statements are not contiguous text
+on the page.
+
+Currently this understands the *Akademie Deutsch* contents layout. Other books
+will need their own parser; the failure is loud, not silent.
+
+> Ingested courses land in `courses/`, which is **gitignored** — the content is
+> copyrighted and this repository is public. `*.pdf` is ignored too.
+
 ## Requirements
 
 - NVIDIA GPU with ~6 GB free VRAM
@@ -104,6 +151,7 @@ Four scripts, none of which need a microphone:
 | `test_segments.py` | segmentation, guillemet-aware splitting, merging | nothing |
 | `test_langid.py` | language classification + every real routing regression | nothing |
 | `test_intents.py` | mode-switch detection, including false positives | nothing |
+| `test_curriculum.py` | textbook parsing and chapter/grammar alignment | nothing |
 | `test_corrections.py` | name protection, and the corrections that must survive it | nothing |
 | `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
 | `test_persistence.py` | session survives `kill -9` mid-conversation | nothing |
@@ -127,6 +175,8 @@ these will sound broken in ways that are hard to trace back from audio.
 python main.py                                  # terminal, mentor mode, A1
 python main.py --web                            # browser UI at :8420
 python main.py --mode practice --level A2       # skip straight to German
+python main.py --chapter 3                      # chapter 3 of your textbook
+python main.py --list-chapters
 python main.py --scenario baeckerei
 python main.py --list-scenarios
 python main.py --list-devices                   # if the wrong mic is picked up
@@ -189,6 +239,12 @@ The knobs that actually matter, in `config.yaml`:
 German goes to the German voice, English to the English voice. Getting this
 wrong is not subtle — the wrong voice phonemises the text with the wrong rules
 and the learner hears mush with no idea why.
+
+Brackets split a segment as well as guillemets, because models gloss themselves
+in them however firmly they are told not to. `gemma3:4b` produced
+`«Guten Tag! Wie heißt du? (What is your name?)»` in *practice* mode, where
+translating defeats the whole exercise. Splitting on the bracket at least sends
+the English to the English voice instead of feeding it to the German one.
 
 The first version trusted the model to wrap German in guillemets. That failed in
 both directions, on both models tried:

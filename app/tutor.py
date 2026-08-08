@@ -15,7 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from . import prompts, scenarios, segments
+from . import curriculum, prompts, scenarios, segments
 from .audio_io import MicListener, Speaker
 from .config import Config
 from .corrections import filter_corrections
@@ -46,7 +46,12 @@ class Tutor:
     def __init__(self, cfg: Config, bus: EventBus | None = None) -> None:
         self.cfg = cfg
         self.bus = bus or EventBus()
-        self.scenario = scenarios.get(cfg.tutor.scenario)
+        # A textbook, if one has been ingested. When present it supplies the
+        # session's topic in place of the stock scenarios, so the app teaches
+        # the same chapters in the same order as the learner's actual class.
+        self.course = curriculum.find(cfg.courses_path, cfg.tutor.course)
+        self.chapter = self._resolve_chapter(cfg.tutor.chapter)
+        self.scenario = self._scenario_for(self.chapter)
         self.history: list[dict[str, str]] = []
         self.session = SessionLog(cfg, level=cfg.tutor.level, scenario=self.scenario.key)
 
@@ -61,6 +66,27 @@ class Tutor:
     @property
     def mode(self) -> str:
         return self.cfg.tutor.mode
+
+    # ---- the course ---------------------------------------------------
+
+    def _resolve_chapter(self, number: int) -> curriculum.Chapter | None:
+        """Chapter `number`, or None to fall back to the stock scenarios."""
+        if not self.course or number <= 0:
+            return None
+        chapter = self.course.get(number)
+        if chapter is None:
+            log.warning("chapter %s is not in %s — falling back to scenario %r",
+                        number, self.course.title, self.cfg.tutor.scenario)
+        return chapter
+
+    def _scenario_for(self, chapter: curriculum.Chapter | None):
+        if chapter is None:
+            return scenarios.get(self.cfg.tutor.scenario)
+        return curriculum.as_scenario(chapter, self.cfg.tutor.level)
+
+    def _course_reference(self) -> str:
+        """The book's own end-of-chapter summary, for the system prompt."""
+        return self.chapter.reference_extract() if self.chapter else ""
 
     # ---- setup --------------------------------------------------------
 
@@ -78,7 +104,8 @@ class Tutor:
 
     def _messages(self) -> list[dict[str, str]]:
         system = prompts.system_prompt(
-            self.mode, self.cfg.tutor.level, self.scenario.description
+            self.mode, self.cfg.tutor.level, self.scenario.description,
+            reference=self._course_reference(),
         )
         keep = self.cfg.tutor.history_turns * 2
         return [{"role": "system", "content": system}, *self.history[-keep:]]
@@ -234,10 +261,34 @@ class Tutor:
             return False
         self.scenario = scenarios.get(key)
         self.cfg.tutor.scenario = key
+        self.chapter = None          # a stock scenario leaves the book behind
+        self.cfg.tutor.chapter = 0
         self.history.clear()  # a new roleplay is a new conversation
         self._publish_config()
         log.info("scenario -> %s", key)
         return True
+
+    def set_chapter(self, number: int) -> bool:
+        """Move to another chapter of the textbook."""
+        if not self.course:
+            return False
+        chapter = self.course.get(int(number))
+        if chapter is None or (self.chapter and chapter.number == self.chapter.number):
+            return False
+        self.chapter = chapter
+        self.cfg.tutor.chapter = chapter.number
+        self.scenario = self._scenario_for(chapter)
+        self.cfg.tutor.scenario = self.scenario.key
+        self.history.clear()  # a new chapter is a new lesson
+        self._publish_config()
+        log.info("chapter -> %s (%s)", chapter.number, chapter.title)
+        return True
+
+    def next_chapter(self) -> bool:
+        if not (self.course and self.chapter):
+            return False
+        nxt = self.course.next_after(self.chapter.number)
+        return self.set_chapter(nxt.number) if nxt else False
 
     def set_mode(self, mode: str) -> bool:
         mode = mode.lower()
@@ -256,6 +307,9 @@ class Tutor:
             mode=self.mode,
             level=self.cfg.tutor.level,
             scenario=self.scenario.key,
+            title=self.scenario.title,
+            chapter=self.chapter.number if self.chapter else None,
+            course=self.course.title if self.course else None,
         )
 
     # ---- lifecycle ----------------------------------------------------

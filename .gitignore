@@ -11,6 +11,10 @@ models/
 # Practice sessions are personal
 sessions/
 
+# Courses are extracted from copyrighted textbooks. This repo is public.
+courses/
+*.pdf
+
 *.log
 .env
 .idea/
