@@ -54,7 +54,11 @@ class LlmCfg:
     api_key: str = "not-needed"
     model: str = "gemma3:12b"
     temperature: float = 0.7
-    max_tokens: int = 300
+    # Short replies are not a style preference. With barge-in off the learner
+    # cannot speak until the tutor stops, so every extra sentence is dead air.
+    max_tokens: int = 140
+    keep_alive: str = "30m"   # Ollama unloads after 5m idle; a reload costs ~16s
+    num_ctx: int = 8192       # system prompt + 12 turns does not fit in 4096
     corrector_model: str = "gemma3:12b"
     corrector_temperature: float = 0.1
 

@@ -103,6 +103,17 @@ class MicListener:
             self._process_frame(frame)
 
     def _process_frame(self, frame: np.ndarray) -> None:
+        # With barge-in off there is nothing to listen FOR while the tutor is
+        # talking, and everything to lose: on speakers its own voice comes back
+        # in, Whisper transcribes it cleanly, and it enters history as a user
+        # turn. Gating here stops the echo at the source instead of trying to
+        # recognise it afterwards.
+        if self.tutor_speaking.is_set() and not self.cfg.tutor.barge_in:
+            if self._collecting:
+                self._reset_state()   # drop a half-captured utterance
+            self._pre_roll.clear()
+            return
+
         prob = self.vad(frame)
         is_speech = prob >= self.cfg.vad.threshold
         frame_ms = int(SILERO_FRAME / self.sr * 1000)

@@ -51,6 +51,42 @@ class LlmClient:
             )
         return True, "ok"
 
+    async def pin_model(self) -> str | None:
+        """Ask Ollama to keep the model resident and size its context.
+
+        Ollama unloads after 5 minutes idle by default, so the first reply
+        after the learner pauses to read costs a full model load — measured at
+        16 s on this machine, which reads as the app being broken.
+
+        This uses Ollama's native endpoint, not the OpenAI-compatible one,
+        which has no way to express keep_alive. Any other server just 404s and
+        we carry on.
+        """
+        base = self.cfg.llm.base_url.rstrip("/")
+        native = base[:-3] if base.endswith("/v1") else base
+
+        try:
+            r = await self._client.post(
+                f"{native}/api/generate",
+                json={
+                    "model": self.cfg.llm.model,
+                    "prompt": "",          # load only, generate nothing
+                    "keep_alive": self.cfg.llm.keep_alive,
+                    "options": {"num_ctx": self.cfg.llm.num_ctx},
+                },
+                timeout=httpx.Timeout(300.0, connect=5.0),
+            )
+            if r.status_code == 200:
+                log.info(
+                    "pinned %s (keep_alive=%s, num_ctx=%d)",
+                    self.cfg.llm.model, self.cfg.llm.keep_alive,
+                    self.cfg.llm.num_ctx,
+                )
+                return None
+            return f"HTTP {r.status_code}"
+        except Exception as e:
+            return str(e)[:120]
+
     async def stream(self, messages: list[Message]) -> AsyncIterator[str]:
         """Yield content deltas as they arrive."""
         payload = {

@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import re
 
+from .langid import DE, EN, detect
 from .prompts import MENTOR, PRACTICE, TOKEN_MENTOR, TOKEN_PRACTICE
-
-DE, EN = "de", "en"
 
 _QUOTED = re.compile(r"«([^»]*)»")
 _TOKENS = {TOKEN_PRACTICE: PRACTICE, TOKEN_MENTOR: MENTOR}
@@ -48,27 +47,82 @@ def strip_markers(text: str) -> str:
     return _QUOTED.sub(lambda m: m.group(1), text).strip()
 
 
+# Stage directions the model sometimes emits ("(German voice)", "(in English)").
+# They are instructions to itself, not speech, and must never be read aloud.
+_STAGE_DIRECTION = re.compile(
+    r"\((?:[^)]*\b(?:voice|speaking|accent|in german|in english|pause|slowly)\b"
+    r"[^)]*)\)",
+    re.IGNORECASE,
+)
+
+
+def clean_for_speech(text: str) -> str:
+    return _STAGE_DIRECTION.sub(" ", text).strip()
+
+
 def split_segments(text: str, default_lang: str = EN) -> list[tuple[str, str]]:
     """Split into [(lang, text), ...], preserving order.
 
-    Text inside guillemets is German; everything else is `default_lang`.
-    Segments that contain no speakable characters are dropped.
+    Guillemets are a hint, not the decision. Each fragment is classified by its
+    own words, because models mark languages unreliably in both directions —
+    see app/langid.py. The guillemets only break ties on fragments too short to
+    classify ("Hallo!"), where being inside marks means German and outside
+    means whatever the mode implies.
     """
+    text = clean_for_speech(text)
     out: list[tuple[str, str]] = []
+
+    pieces: list[tuple[bool, str]] = []   # (was_in_guillemets, text)
     pos = 0
-
-    def add(lang: str, chunk: str) -> None:
-        # A quote usually leaves orphaned punctuation behind it ("«…», which
-        # means…"). Speaking a leading comma is noise, so trim it.
-        chunk = chunk.strip().lstrip(",;:. ").strip()
-        # Skip fragments that are only punctuation or whitespace.
-        if chunk and re.search(r"[^\W_]", chunk, re.UNICODE):
-            out.append((lang, chunk))
-
     for m in _QUOTED.finditer(text):
-        add(default_lang, text[pos : m.start()])
-        add(DE, m.group(1))
+        pieces.append((False, text[pos : m.start()]))
+        pieces.append((True, m.group(1)))
         pos = m.end()
+    pieces.append((False, text[pos:]))
 
-    add(default_lang, text[pos:])
-    return out
+    def carry_punctuation(punct: str) -> None:
+        """Attach orphaned punctuation to the previous segment.
+
+        Quotes leave punctuation stranded between them ("«eins», «zwei»").
+        Dropping it turns a list into a run-on; keeping it as its own segment
+        would have the synthesiser read a bare comma. Appending preserves the
+        pause where it belongs.
+        """
+        punct = punct.strip()
+        if punct and out:
+            out[-1] = (out[-1][0], f"{out[-1][1]}{punct}")
+
+    for quoted, chunk in pieces:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+
+        if not re.search(r"[^\W_]", chunk, re.UNICODE):
+            carry_punctuation(chunk)
+            continue
+
+        if lead := re.match(r"^[,;:.!?…\s]+", chunk):
+            carry_punctuation(lead.group())
+            chunk = chunk[lead.end():].strip()
+            if not chunk:
+                continue
+
+        # Inside guillemets, assume German when the words give no signal.
+        out.append((detect(chunk, DE if quoted else default_lang), chunk))
+
+    return _merge_adjacent(out)
+
+
+def _merge_adjacent(segs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Join neighbouring fragments in the same language.
+
+    Fewer, longer TTS calls sound more natural than many short ones — Piper
+    resets prosody at every call, so splitting a sentence makes it choppy.
+    """
+    merged: list[tuple[str, str]] = []
+    for lang, chunk in segs:
+        if merged and merged[-1][0] == lang:
+            merged[-1] = (lang, f"{merged[-1][1]} {chunk}")
+        else:
+            merged.append((lang, chunk))
+    return merged
