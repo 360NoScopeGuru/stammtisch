@@ -27,6 +27,11 @@ from .tts import Synthesizer
 
 log = logging.getLogger(__name__)
 
+# The playback queue drains when the last chunk is handed to the audio device,
+# not when it finishes leaving the speaker. Keep the mic gated a moment longer
+# so the tail of the tutor's own voice does not open a new utterance.
+SPEECH_TAIL_MS = 250
+
 
 @dataclass
 class Turn:
@@ -62,6 +67,8 @@ class Tutor:
         ok, msg = await self.llm.health()
         if not ok:
             raise RuntimeError(f"LLM preflight failed: {msg}")
+        if err := await self.llm.pin_model():
+            log.info("could not pin model (not Ollama?): %s", err)
         log.info("warming models...")
         t0 = time.perf_counter()
         self.stt.warm()
@@ -83,11 +90,13 @@ class Tutor:
         In mentor mode a single sentence is often mixed — English prose with a
         German phrase inside guillemets — so it may become several segments.
         """
-        # Guillemets mean German; everything outside them is English, in both
-        # modes. Practice-mode replies routinely carry parenthetical glosses
-        # ("«Hallo!» (Hello!)") and reading those with German phonetics
-        # produces gibberish.
-        for lang, chunk in segments.split_segments(text, segments.EN):
+        # Each fragment is classified by its own words (app/langid.py). The
+        # mode only breaks ties on fragments too short to call, where practice
+        # mode means an unmarked "Ja." is German and mentor mode means it is
+        # more likely an English aside.
+        tie_break = segments.DE if self.mode == prompts.PRACTICE else segments.EN
+
+        for lang, chunk in segments.split_segments(text, tie_break):
             if self.mic.interrupted.is_set():
                 return
             pcm = await asyncio.to_thread(self.tts.synthesize, chunk, lang)
@@ -103,7 +112,11 @@ class Tutor:
             await self._speak(text)
             await asyncio.to_thread(self.speaker.wait_until_done, 30.0)
         finally:
-            self.mic.tutor_speaking.clear()
+            await self._end_speaking()
+
+    async def _end_speaking(self) -> None:
+        await asyncio.sleep(SPEECH_TAIL_MS / 1000)
+        self.mic.tutor_speaking.clear()
 
     async def respond(self, user_text: str) -> Turn:
         """Stream one tutor turn, speaking sentence-by-sentence."""
@@ -154,7 +167,7 @@ class Tutor:
             self.history.pop()  # don't poison history with a failed turn
             raise RuntimeError(str(e)) from e
         finally:
-            self.mic.tutor_speaking.clear()
+            await self._end_speaking()
 
         reply = " ".join(spoken).strip()
         if reply:

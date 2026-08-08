@@ -176,7 +176,11 @@ class ConversationRunner:
                 break
 
             self.bus.publish("status", state=THINKING)
-            text = await asyncio.to_thread(self.tutor.stt.transcribe, audio)
+            # In mentor mode the learner speaks mostly English, so let Whisper
+            # detect. In practice mode pin it to German: the learner's accent is
+            # a beginner's and auto-detect drifts to English on short replies.
+            lang = None if self.tutor.mode == MENTOR else self.tutor.cfg.stt.language
+            text = await asyncio.to_thread(self.tutor.stt.transcribe, audio, lang)
             if not text or len(text) < 2:
                 continue
 
@@ -185,7 +189,16 @@ class ConversationRunner:
 
             self.tutor.session.add_turn("user", text)
             self.bus.publish("user_turn", text=text)
-            self.tutor.queue_correction(text)
+
+            # Only grade German. Running the corrector on an English sentence
+            # produced feedback like 'Hof Arjo' -> 'Haus Arjo': confident,
+            # authoritative, and about a word the learner never said.
+            heard_german = (
+                self.tutor.mode == PRACTICE
+                or getattr(self.tutor.stt, "last_language", None) == "de"
+            )
+            if heard_german:
+                self.tutor.queue_correction(text)
 
             try:
                 self.bus.publish("status", state=SPEAKING)

@@ -63,7 +63,8 @@ class FakeTutor:
         # Return "" once exhausted — the loop skips empty transcripts, so an
         # unexpected extra utterance shows up as a failed assertion, not a crash.
         self.stt = types.SimpleNamespace(
-            transcribe=lambda a: transcripts.pop(0) if transcripts else ""
+            transcribe=lambda a, lang=None: transcripts.pop(0) if transcripts else "",
+            last_language="de",   # so corrections are exercised
         )
         self.reply_delay = 0.0  # stand-in for TTS playback time
         self.session = _FakeSession()

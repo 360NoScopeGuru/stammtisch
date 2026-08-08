@@ -21,8 +21,8 @@ by `app/intents.py` reading your transcript, **not** by the model — see
 [Mode switching](#mode-switching) for why.
 
 Each language gets its own Piper voice, routed per phrase. A German voice
-reading English produces gibberish, so the model marks German with guillemets
-(`«…»`) and each fragment goes to the matching voice.
+reading English produces gibberish, so every fragment is classified by
+`app/langid.py` and sent to the matching voice.
 
 ## How it works
 
@@ -41,10 +41,31 @@ never interrupts you to correct grammar; mistakes surface in the session review.
 
 ## Requirements
 
-- NVIDIA GPU with ~10 GB free VRAM (RTX 5080 Laptop: comfortable)
+- NVIDIA GPU with ~6 GB free VRAM
 - An OpenAI-compatible LLM server — Ollama, LM Studio, or `llama.cpp --server`
-- **Headphones.** There is no echo cancellation. On speakers, the tutor hears
-  itself and interrupts itself. Or set `tutor.barge_in: false`.
+- **Mains power.** See below — this matters more than anything else here.
+
+## Plug the laptop in
+
+On a laptop this is the single largest factor in whether the app feels usable.
+
+Measured on an RTX 5080 Laptop, unplugged, at 21% battery, Windows "Silent"
+power profile:
+
+```
+GPU utilisation : 96–100 %      (it really is on the GPU)
+GPU power       : 33 W          (of a 175 W limit)
+gemma3:12b      : ~5 tokens/sec
+full reply      : 11–15 seconds
+```
+
+The GPU was pinned at full utilisation while drawing a fifth of its power
+budget, so it ran at roughly a fifth of its speed. Nothing in the code can
+compensate for that. Plug in and turn off any "Silent"/battery-saver profile
+before concluding the app is slow.
+
+`python scripts/bench_llm.py` reports time-to-first-sentence and full reply time
+for any model, which is the honest way to check.
 
 ## Setup
 
@@ -80,7 +101,8 @@ Four scripts, none of which need a microphone:
 | Script | Covers | Needs |
 |---|---|---|
 | `test_sentences.py` | streaming sentence splitter, German abbreviations | nothing |
-| `test_segments.py` | language routing, guillemet-aware splitting | nothing |
+| `test_segments.py` | segmentation, guillemet-aware splitting, merging | nothing |
+| `test_langid.py` | language classification + every real routing regression | nothing |
 | `test_intents.py` | mode-switch detection, including false positives | nothing |
 | `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
 | `test_web.py` | WebSocket delivery, backlog replay, controls | nothing |
@@ -151,6 +173,32 @@ The knobs that actually matter, in `config.yaml`:
 | `tts.voices` | One Piper voice per language. Swap `en` for `en_GB-alba-medium` if you prefer British English. |
 | `llm.max_tokens` | Keep it low. Long tutor turns kill conversation flow. |
 | `stt.model` | Drop to `distil-large-v3` or `medium` if VRAM gets tight. |
+| `llm.model` | The biggest latency lever. `gemma3:4b` is ~3x faster than `12b` and usually the better trade at A1/A2. |
+| `llm.max_tokens` | 140 by default. With barge-in off, a long reply is enforced silence. |
+| `llm.keep_alive` | Stops Ollama unloading between turns; a reload costs ~16s. |
+
+## Voice routing
+
+German goes to the German voice, English to the English voice. Getting this
+wrong is not subtle — the wrong voice phonemises the text with the wrong rules
+and the learner hears mush with no idea why.
+
+The first version trusted the model to wrap German in guillemets. That failed in
+both directions, on both models tried:
+
+| Model | Emitted | Result |
+|---|---|---|
+| `gemma3:12b` | `«Hallo! Wie geht es dir?» (Hello! How are you?)` | English gloss handled, but earlier variants put it *inside* the marks → English to the German voice |
+| `gemma3:4b` | `«Guten Tag!» Wie geht es Ihnen heute?` | German *outside* the marks → German to the English voice |
+| `gemma3:4b` | `(German voice) «Hallo!»` | stage direction read aloud |
+
+So `app/langid.py` classifies each fragment by its own function words and
+umlauts, and the guillemets are demoted to a tie-breaker for fragments too short
+to call ("Ja."). Stage directions are stripped before synthesis. Adjacent
+same-language fragments are merged, since Piper resets prosody per call and
+splitting a sentence makes it choppy.
+
+`scripts/test_langid.py` pins every one of the strings above.
 
 ## Mode switching
 
@@ -171,6 +219,22 @@ near-misses like *"I practise German every day"* that must **not** trigger.
 
 Stray tokens are still stripped from replies so they can never be read aloud.
 
+## Speech recognition language
+
+Whisper is told which language to expect, and this is mode-dependent.
+
+In **practice** mode it is pinned to German. In **mentor** mode it auto-detects,
+because the learner is speaking mostly English — and forcing German onto English
+speech does not fail loudly. It produces confident German-shaped nonsense:
+
+```
+said:  "Hi, my name is Vamshee"
+heard: "Bamsi Taran ist ein bisschen komisch"
+```
+
+which then reached the corrector, which duly "corrected" a phrase the learner
+never said. Corrections now only run when the utterance was actually German.
+
 ## The echo guard
 
 Speaker bleed is the first thing that breaks this app on a laptop. A real
@@ -181,14 +245,18 @@ assistant: "Hallo! Schön, dich zu sehen. Wie war denn dein Tag heute?"
 user:      "Hallo, schön dich zu sehen. Wie war denn dein Tag heute?"   ← itself
 ```
 
-Since there is no AEC, `app/session.py` compares each transcript against what
-the tutor just said and discards anything ≥ `ECHO_SIMILARITY` (0.75) within
-`ECHO_WINDOW_S` (2.5 s). Measured separation is wide — verbatim echo scores
-0.95–1.00, genuine speech 0.04–0.52 — including the case where the learner
-legitimately repeats the tutor's question back ("Und wie war dein Tag?", 0.52).
+There are two defences, in order of importance:
 
-`barge_in` now defaults to **false** for the same reason. Turn it on once you're
-on headphones; the guard stays active either way as a backstop.
+1. **The mic is gated shut while the tutor speaks** (when `barge_in` is off,
+   the default), plus 250 ms afterwards to cover the audio device's buffer.
+   This stops the echo at the source rather than recognising it later.
+2. **A similarity guard** as backstop: any transcript ≥ `ECHO_SIMILARITY`
+   (0.75) similar to what the tutor just said, within `ECHO_WINDOW_S` (2.5 s),
+   is discarded. Separation is wide — verbatim echo scores 0.95–1.00, genuine
+   speech 0.04–0.52, including a learner legitimately repeating the tutor's
+   question back ("Und wie war dein Tag?", 0.52).
+
+Turn `barge_in` on once you're on headphones; the guard stays active either way.
 
 German quality varies a lot more than benchmarks suggest, and it is the single
 biggest driver of whether this feels useful. Worth A/B-ing yourself:

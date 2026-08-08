@@ -19,7 +19,9 @@ SEGMENT_CASES = [
     (
         'Try saying «Ich heiße Anna», which means "my name is Anna".',
         EN,
-        [(EN, "Try saying"), (DE, "Ich heiße Anna"),
+        # The stranded comma rides along with the phrase it followed, so the
+        # synthesiser pauses in the right place.
+        [(EN, "Try saying"), (DE, "Ich heiße Anna,"),
          (EN, 'which means "my name is Anna".')],
     ),
     (
@@ -27,13 +29,11 @@ SEGMENT_CASES = [
         EN,
         [(DE, "Guten Morgen!"), (EN, "is how you greet someone before noon.")],
     ),
-    # Practice mode: unmarked text is German.
     ("«Wie geht es dir?»", DE, [(DE, "Wie geht es dir?")]),
-    # No markers at all — everything takes the default.
     ("That is exactly right.", EN, [(EN, "That is exactly right.")]),
-    # Punctuation-only fragments between quotes must be dropped, not spoken.
-    ("«eins», «zwei», «drei»", EN,
-     [(DE, "eins"), (DE, "zwei"), (DE, "drei")]),
+    # Same language back to back: merged into one call, commas preserved, so it
+    # is spoken as a list rather than three disconnected words.
+    ("«eins», «zwei», «drei»", EN, [(DE, "eins, zwei, drei")]),
 ]
 
 TOKEN_CASES = [

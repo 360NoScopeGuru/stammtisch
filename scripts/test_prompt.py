@@ -20,7 +20,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import prompts, scenarios  # noqa: E402
 from app.config import load_config  # noqa: E402
 from app.llm import LlmClient  # noqa: E402
+from app.langid import DE  # noqa: E402
 from app.segments import EN, extract_mode, split_segments  # noqa: E402
+
+STAGE_LEAK = re.compile(r"\b(german voice|english voice|speaking slowly)\b",
+                        re.IGNORECASE)
+
+
+def show_routing(reply: str, tie_break: str) -> list[tuple[str, str]]:
+    """Print what each voice will actually be handed."""
+    segs = split_segments(reply, tie_break)
+    print("      routing:")
+    for lang, chunk in segs:
+        print(f"        [{lang}] {chunk[:66]}")
+    return segs
 
 # Characters that should never be spoken aloud.
 BAD_FOR_TTS = re.compile(r"[*_#•·]|^\s*[-\d]+[.)]\s", re.MULTILINE)
@@ -73,9 +86,10 @@ async def main() -> int:
                       "Hi, I want to learn how to introduce myself.")
     print(f"\n  > {reply}\n")
 
-    segs = split_segments(reply, "en")
-    de_text = " ".join(t for lang, t in segs if lang == "de")
-    en_text = " ".join(t for lang, t in segs if lang == "en")
+    segs = show_routing(reply, EN)
+    de_text = " ".join(t for lang, t in segs if lang == DE)
+    en_text = " ".join(t for lang, t in segs if lang == EN)
+    spoken = " ".join(t for _, t in segs)
 
     check("uses guillemets for German", "«" in reply and "»" in reply,
           "no « » found — voice routing would send German to the English voice")
@@ -89,8 +103,12 @@ async def main() -> int:
           f"found: {BAD_FOR_TTS.findall(reply)[:5]}")
     check("reply is short enough for speech (< 600 chars)", len(reply) < 600,
           f"{len(reply)} chars")
-    check("no English inside guillemets (it would get the German voice)",
-          not ENGLISH_HINT.search(de_text), f"German segments: {de_text[:120]!r}")
+    check("English is routed to the English voice",
+          not ENGLISH_HINT.search(de_text),
+          f"English landed in a German segment: {de_text[:120]!r}")
+    check("stage directions never reach the synthesiser",
+          not STAGE_LEAK.search(spoken),
+          f"would be read aloud: {spoken[:120]!r}")
     # Any stray token must at least be strippable, so it is never spoken.
     clean, stray = extract_mode(reply)
     check("stray mode tokens are strippable", "[[" not in clean,
@@ -105,17 +123,20 @@ async def main() -> int:
     reply3 = await ask(client, prompts.PRACTICE, "A1", "baeckerei",
                        "Hallo!")
     print(f"\n  > {reply3}\n")
-    # Segment exactly as tutor.py does: guillemets are German, rest is English.
-    segs3 = split_segments(reply3, EN)
-    de3 = " ".join(t for lang, t in segs3 if lang == "de")
+    # Segment exactly as tutor.py does in practice mode: DE breaks ties.
+    segs3 = show_routing(reply3, DE)
+    de3 = " ".join(t for lang, t in segs3 if lang == DE)
     en3 = " ".join(t for lang, t in segs3 if lang == EN)
     check("speaks German", bool(GERMAN_HINT.search(de3 or reply3)))
-    check("wraps German in guillemets", "«" in reply3)
-    check("no English inside guillemets", not ENGLISH_HINT.search(de3),
-          f"would be read by the German voice: {de3[:140]!r}")
+    check("all German reaches the German voice",
+          not GERMAN_HINT.search(en3),
+          f"German landed in an English segment: {en3[:140]!r}")
+    check("no English reaches the German voice",
+          not ENGLISH_HINT.search(de3),
+          f"English landed in a German segment: {de3[:140]!r}")
     # Soft check: immersion suffers if it translates everything it says.
-    if ENGLISH_HINT.search(en3):
-        print(f"  NOTE  practice mode is still glossing in English: {en3[:90]!r}")
+    if en3.strip():
+        print(f"  NOTE  practice mode still says some English: {en3[:90]!r}")
 
     await client.aclose()
     print(f"\n{'PASS' if not fails else 'FAIL'} — prompt contract\n")
