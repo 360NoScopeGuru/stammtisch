@@ -34,6 +34,19 @@ SEGMENT_CASES = [
     # Same language back to back: merged into one call, commas preserved, so it
     # is spoken as a list rather than three disconnected words.
     ("«eins», «zwei», «drei»", EN, [(DE, "eins, zwei, drei")]),
+    # Real capture from practice mode: the model glossed itself in brackets
+    # despite being told never to. Without splitting on the bracket the whole
+    # line, English included, would go to the German voice.
+    (
+        "«Guten Tag! Wie heißt du? (What is your name?)»", DE,
+        [(DE, "Guten Tag! Wie heißt du?"), (EN, "What is your name?")],
+    ),
+    # A German aside in brackets is still German — the bracket only breaks
+    # ties, it does not decide. The trailing full stop rides along, as ever.
+    (
+        "That costs «zwei Euro» (zwei Euro fünfzig).", EN,
+        [(EN, "That costs"), (DE, "zwei Euro zwei Euro fünfzig.")],
+    ),
 ]
 
 TOKEN_CASES = [

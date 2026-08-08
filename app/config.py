@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 class PathsCfg:
     models_root: str = "D:/stammtisch-models"
     sessions_dir: str = "./sessions"
+    courses_dir: str = "./courses"
 
 
 @dataclass
@@ -91,6 +92,11 @@ class TutorCfg:
     scenario: str = "grundlagen"
     history_turns: int = 12
     barge_in: bool = False
+    # Follow a textbook instead of the stock scenarios. `course` is the file
+    # stem in paths.courses_dir, blank meaning "the only one there"; `chapter`
+    # is 0 to ignore the course entirely and use `scenario` above.
+    course: str = ""
+    chapter: int = 0
 
 
 @dataclass
@@ -119,6 +125,11 @@ class Config:
     @property
     def sessions_path(self) -> Path:
         p = Path(self.paths.sessions_dir).expanduser()
+        return p if p.is_absolute() else REPO_ROOT / p
+
+    @property
+    def courses_path(self) -> Path:
+        p = Path(self.paths.courses_dir).expanduser()
         return p if p.is_absolute() else REPO_ROOT / p
 
 

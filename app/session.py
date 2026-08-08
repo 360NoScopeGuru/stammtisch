@@ -125,6 +125,16 @@ class ConversationRunner:
             if self.tutor.set_scenario(str(msg.get("value", ""))):
                 self.bus.publish("scenario_changed", scenario=self.tutor.scenario.key)
                 await self._speak_opener()
+        elif action == "set_chapter":
+            if self.tutor.set_chapter(int(msg.get("value", 0) or 0)):
+                self.bus.publish("scenario_changed",
+                                 scenario=self.tutor.scenario.key)
+                await self._speak_opener()
+        elif action == "next_chapter":
+            if self.tutor.next_chapter():
+                self.bus.publish("scenario_changed",
+                                 scenario=self.tutor.scenario.key)
+                await self._speak_opener()
         elif action == "set_mode":
             await self._switch_mode(str(msg.get("value", "")))
         elif action == "stop":

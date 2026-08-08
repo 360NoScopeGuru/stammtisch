@@ -3,6 +3,8 @@
     python main.py                          # terminal session
     python main.py --web                    # browser UI at :8420
     python main.py --scenario baeckerei --level A2
+    python main.py --chapter 3               # teach chapter 3 of your textbook
+    python main.py --list-chapters
     python main.py --list-scenarios
     python main.py --list-devices
 """
@@ -14,7 +16,7 @@ import asyncio
 import logging
 import sys
 
-from app import scenarios
+from app import curriculum, scenarios
 from app.config import load_config
 from app.events import EventBus
 from app.session import ConversationRunner
@@ -28,10 +30,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["mentor", "practice"],
                    help="mentor teaches in English; practice is German immersion")
     p.add_argument("--scenario")
+    p.add_argument("--chapter", type=int,
+                   help="chapter of the ingested textbook (0 uses --scenario)")
+    p.add_argument("--course", help="course file stem in paths.courses_dir")
     p.add_argument("--web", action="store_true", help="serve the browser UI")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8420)
     p.add_argument("--list-scenarios", action="store_true")
+    p.add_argument("--list-chapters", action="store_true",
+                   help="show the ingested textbook's chapters")
     p.add_argument("--list-devices", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args()
@@ -112,11 +119,27 @@ def main() -> int:
         cfg.tutor.level = args.level
     if args.mode:
         cfg.tutor.mode = args.mode
+    if args.course:
+        cfg.tutor.course = args.course
     if args.scenario:
         if args.scenario not in scenarios.SCENARIOS:
             print(f"Unknown scenario {args.scenario!r}.\n{scenarios.listing()}")
             return 2
         cfg.tutor.scenario = args.scenario
+        cfg.tutor.chapter = 0     # an explicit scenario wins over the book
+    if args.chapter is not None:
+        cfg.tutor.chapter = args.chapter
+
+    if args.list_chapters:
+        course = curriculum.find(cfg.courses_path, cfg.tutor.course)
+        if not course:
+            print(f"\n  No course in {cfg.courses_path}.\n"
+                  f"  Ingest one first:\n"
+                  f"    python scripts/ingest_textbook.py \"path/to/book.pdf\"\n")
+            return 1
+        print(f"\n  {course.title}  ({course.level})\n")
+        print(course.listing() + "\n")
+        return 0
 
     if args.web:
         # uvicorn creates and owns its own event loop, so this must NOT run

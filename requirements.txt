@@ -18,3 +18,4 @@ websockets>=12.0
 # Drop both lines if running Whisper on CPU (stt.device: cpu).
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
+pypdf>=4.0        # textbook ingestion (scripts/ingest_textbook.py)

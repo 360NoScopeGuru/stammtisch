@@ -18,6 +18,19 @@ from .langid import DE, EN, detect
 from .prompts import MENTOR, PRACTICE, TOKEN_MENTOR, TOKEN_PRACTICE
 
 _QUOTED = re.compile(r"«([^»]*)»")
+_PARENS = re.compile(r"\(([^)]*)\)")
+
+
+def _split_parens(kind: str, text: str) -> list[tuple[str, str]]:
+    """Pull bracketed asides out of `text`, keeping everything in order."""
+    out: list[tuple[str, str]] = []
+    pos = 0
+    for m in _PARENS.finditer(text):
+        out.append((kind, text[pos : m.start()]))
+        out.append(("paren", m.group(1)))
+        pos = m.end()
+    out.append((kind, text[pos:]))
+    return out
 _TOKENS = {TOKEN_PRACTICE: PRACTICE, TOKEN_MENTOR: MENTOR}
 # Models sometimes wrap the token in punctuation or markdown.
 _TOKEN_RE = re.compile(
@@ -72,13 +85,25 @@ def split_segments(text: str, default_lang: str = EN) -> list[tuple[str, str]]:
     text = clean_for_speech(text)
     out: list[tuple[str, str]] = []
 
-    pieces: list[tuple[bool, str]] = []   # (was_in_guillemets, text)
+    # Guillemets and brackets both mark a change of voice. Brackets matter
+    # because models gloss themselves in them even when told not to —
+    # gemma3:4b produced «Guten Tag! Wie heißt du? (What is your name?)» in
+    # practice mode, and without a split here the whole thing, English gloss
+    # included, goes to the German voice and comes out as noise.
+    # Brackets are split in a second pass rather than in one combined regex,
+    # because the gloss usually sits *inside* the guillemets and a single
+    # alternation would let the guillemet match swallow it whole.
+    pieces: list[tuple[str, str]] = []   # (kind, text)
     pos = 0
     for m in _QUOTED.finditer(text):
-        pieces.append((False, text[pos : m.start()]))
-        pieces.append((True, m.group(1)))
+        pieces += _split_parens("plain", text[pos : m.start()])
+        pieces += _split_parens("quoted", m.group(1))
         pos = m.end()
-    pieces.append((False, text[pos:]))
+    pieces += _split_parens("plain", text[pos:])
+
+    # An aside in brackets is a gloss, so English breaks its ties; inside
+    # guillemets German does; elsewhere the mode decides.
+    tie_break = {"quoted": DE, "paren": EN, "plain": default_lang}
 
     def carry_punctuation(punct: str) -> None:
         """Attach orphaned punctuation to the previous segment.
@@ -92,7 +117,7 @@ def split_segments(text: str, default_lang: str = EN) -> list[tuple[str, str]]:
         if punct and out:
             out[-1] = (out[-1][0], f"{out[-1][1]}{punct}")
 
-    for quoted, chunk in pieces:
+    for kind, chunk in pieces:
         chunk = chunk.strip()
         if not chunk:
             continue
@@ -107,8 +132,7 @@ def split_segments(text: str, default_lang: str = EN) -> list[tuple[str, str]]:
             if not chunk:
                 continue
 
-        # Inside guillemets, assume German when the words give no signal.
-        out.append((detect(chunk, DE if quoted else default_lang), chunk))
+        out.append((detect(chunk, tie_break[kind]), chunk))
 
     return _merge_adjacent(out)
 
