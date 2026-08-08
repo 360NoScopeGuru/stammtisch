@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stammtisch</title>
+<style>
+  :root {
+    --bg: #f6f6f4;      --panel: #fff;       --ink: #1c1c1a;
+    --muted: #6b6b66;   --line: #e2e2dd;     --accent: #b4581e;
+    --user-bg: #e8e6e0; --tutor-bg: #fff;
+    --good: #2f7d4f;    --bad: #b03636;      --chip: #efeee9;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;    --panel: #1e1e23;    --ink: #e9e9e4;
+      --muted: #97978f; --line: #2e2e35;     --accent: #e8925a;
+      --user-bg: #272730; --tutor-bg: #1e1e23;
+      --good: #6fcf97;  --bad: #f08585;      --chip: #2a2a31;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-weight: 650; letter-spacing: -.01em; margin-right: 4px; }
+  .brand span { color: var(--accent); }
+  select {
+    font: inherit; font-size: 13px; padding: 5px 9px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; cursor: pointer;
+  }
+  label.ctl { font-size: 12px; color: var(--muted); display: flex;
+              align-items: center; gap: 6px; }
+
+  .pill {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font-size: 12.5px; font-weight: 550; padding: 5px 12px;
+    border-radius: 999px; background: var(--chip); color: var(--muted);
+    white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pill[data-s="listening"] { color: var(--good); }
+  .pill[data-s="listening"] .dot { animation: pulse 1.4s ease-in-out infinite; }
+  .pill[data-s="thinking"]  { color: var(--accent); }
+  .pill[data-s="thinking"] .dot { animation: pulse .7s ease-in-out infinite; }
+  .pill[data-s="speaking"]  { color: var(--accent); }
+  .pill[data-s="offline"]   { color: var(--bad); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  main { flex: 1; display: grid; grid-template-columns: 1fr 340px;
+         min-height: 0; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; }
+                              aside { display: none; } }
+
+  #chat { overflow-y: auto; padding: 22px 24px 40px; }
+  .turn { max-width: 640px; margin: 0 auto 14px; display: flex; }
+  .turn.user { justify-content: flex-end; }
+  .bubble {
+    padding: 9px 14px; border-radius: var(--radius);
+    border: 1px solid var(--line); background: var(--tutor-bg);
+    max-width: 78%; white-space: pre-wrap; word-wrap: break-word;
+    animation: rise .18s ease-out;
+  }
+  .turn.user .bubble { background: var(--user-bg); border-color: transparent; }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px) } }
+  .meta { font-size: 11px; color: var(--muted); margin-top: 4px;
+          font-variant-numeric: tabular-nums; }
+  .turn.user .meta { text-align: right; }
+  .fix { font-size: 12.5px; margin-top: 6px; padding-top: 6px;
+         border-top: 1px dashed var(--line); color: var(--muted); }
+  .fix b { color: var(--good); font-weight: 550; }
+  .sys { text-align: center; font-size: 12px; color: var(--muted);
+         margin: 18px auto; max-width: 640px; }
+  .sys.err { color: var(--bad); }
+
+  aside { border-left: 1px solid var(--line); background: var(--panel);
+          overflow-y: auto; padding: 18px; }
+  aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+             color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  aside section { margin-bottom: 26px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { background: var(--bg); border: 1px solid var(--line);
+          border-radius: 10px; padding: 9px 11px; }
+  .stat .n { font-size: 19px; font-weight: 620; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+             letter-spacing: .05em; }
+  .corr { border-left: 2px solid var(--bad); padding: 2px 0 2px 10px;
+          margin-bottom: 13px; font-size: 13px; }
+  .corr .o { color: var(--muted); text-decoration: line-through;
+             text-decoration-color: var(--bad); }
+  .corr .c { color: var(--good); }
+  .corr .e { font-size: 11.5px; color: var(--muted); margin-top: 3px;
+             font-style: italic; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--chip); border-radius: 6px; padding: 3px 8px;
+          font-size: 12.5px; }
+  .empty { font-size: 12.5px; color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Stamm<span>tisch</span></div>
+  <label class="ctl">Szenario
+    <select id="scenario"></select>
+  </label>
+  <label class="ctl">Niveau
+    <select id="level">
+      <option>A1</option><option>A2</option><option>B1</option>
+      <option>B2</option><option>C1</option>
+    </select>
+  </label>
+  <div class="pill" id="pill" data-s="offline"><i class="dot"></i><span id="pillText">verbinde…</span></div>
+</header>
+
+<main>
+  <div id="chat"></div>
+  <aside>
+    <section>
+      <h2>Sitzung</h2>
+      <div class="stats">
+        <div class="stat"><div class="n" id="sTurns">0</div><div class="l">Beiträge</div></div>
+        <div class="stat"><div class="n" id="sFix">0</div><div class="l">Korrekturen</div></div>
+        <div class="stat"><div class="n" id="sLat">–</div><div class="l">Ø Antwort</div></div>
+        <div class="stat"><div class="n" id="sMin">0</div><div class="l">Minuten</div></div>
+      </div>
+    </section>
+    <section>
+      <h2>Korrekturen</h2>
+      <div id="fixes"><p class="empty">Noch keine Fehler.</p></div>
+    </section>
+    <section>
+      <h2>Wortschatz</h2>
+      <div class="chips" id="vocab"></div>
+    </section>
+  </aside>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const chat = $('#chat'), fixes = $('#fixes'), vocabBox = $('#vocab');
+
+const state = { turns: 0, lat: [], vocab: new Set(), fixes: 0,
+                start: Date.now(), seen: new Set(), lastUser: null };
+
+const STATUS = { listening: 'hört zu', thinking: 'denkt nach',
+                 speaking: 'spricht', idle: 'bereit', offline: 'getrennt' };
+
+function setStatus(s) {
+  $('#pill').dataset.s = s;
+  $('#pillText').textContent = STATUS[s] || s;
+}
+
+function atBottom() {
+  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+}
+function scroll(force) {
+  if (force || atBottom()) chat.scrollTop = chat.scrollHeight;
+}
+
+function addTurn(role, text, meta) {
+  const stick = atBottom();
+  const el = document.createElement('div');
+  el.className = 'turn ' + role;
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = text;
+  if (meta) {
+    const m = document.createElement('div');
+    m.className = 'meta';
+    m.textContent = meta;
+    b.appendChild(m);
+  }
+  el.appendChild(b);
+  chat.appendChild(el);
+  scroll(stick);
+  return b;
+}
+
+function addSys(text, isErr) {
+  const el = document.createElement('div');
+  el.className = 'sys' + (isErr ? ' err' : '');
+  el.textContent = text;
+  chat.appendChild(el);
+  scroll(true);
+}
+
+function refreshStats() {
+  $('#sTurns').textContent = state.turns;
+  $('#sFix').textContent = state.fixes;
+  $('#sLat').textContent = state.lat.length
+    ? Math.round(state.lat.reduce((a, b) => a + b, 0) / state.lat.length) + 'ms'
+    : '–';
+  $('#sMin').textContent = Math.floor((Date.now() - state.start) / 60000);
+}
+setInterval(refreshStats, 10000);
+
+function renderFix(c) {
+  const d = document.createElement('div');
+  d.className = 'corr';
+  const o = document.createElement('div'); o.className = 'o'; o.textContent = c.original || '';
+  const n = document.createElement('div'); n.className = 'c'; n.textContent = c.corrected || '';
+  d.append(o, n);
+  if (c.explanation) {
+    const e = document.createElement('div'); e.className = 'e';
+    e.textContent = c.explanation; d.appendChild(e);
+  }
+  return d;
+}
+
+const handlers = {
+  status: e => setStatus(e.state),
+
+  config: e => {
+    if (e.scenarios) {
+      const sel = $('#scenario');
+      sel.innerHTML = '';
+      for (const s of e.scenarios) {
+        const o = document.createElement('option');
+        o.value = s.key;
+        o.textContent = `${s.title} (${s.min_level}+)`;
+        sel.appendChild(o);
+      }
+    }
+    if (e.scenario) $('#scenario').value = e.scenario;
+    if (e.level) $('#level').value = e.level;
+  },
+
+  user_turn: e => {
+    state.turns++;
+    state.lastUser = addTurn('user', e.text);
+    refreshStats();
+  },
+
+  tutor_turn: e => {
+    addTurn('tutor', e.text, e.latency_ms ? Math.round(e.latency_ms) + ' ms' : null);
+    if (e.latency_ms) state.lat.push(e.latency_ms);
+    refreshStats();
+  },
+
+  // Arrives a beat after the turn — patch it into the bubble that's already there.
+  corrections: e => {
+    for (const c of (e.items || [])) {
+      state.fixes++;
+      if (fixes.querySelector('.empty')) fixes.innerHTML = '';
+      fixes.prepend(renderFix(c));
+      if (state.lastUser) {
+        const f = document.createElement('div');
+        f.className = 'fix';
+        f.innerHTML = '↳ <b></b>';
+        f.querySelector('b').textContent = c.corrected || '';
+        state.lastUser.appendChild(f);
+      }
+    }
+    for (const w of (e.vocab || [])) {
+      if (state.vocab.has(w)) continue;
+      state.vocab.add(w);
+      const c = document.createElement('span');
+      c.className = 'chip'; c.textContent = w;
+      vocabBox.appendChild(c);
+    }
+    refreshStats();
+  },
+
+  scenario_changed: e => {
+    chat.innerHTML = '';
+    state.lastUser = null;
+    addSys('Neues Szenario: ' + e.scenario);
+  },
+
+  error: e => addSys('⚠ ' + e.message, true),
+  fatal: e => { addSys('⚠ ' + e.message, true); setStatus('offline'); },
+  session_end: () => setStatus('idle'),
+};
+
+let sock, retry = 0;
+function connect() {
+  sock = new WebSocket(`ws://${location.host}/ws`);
+
+  sock.onopen = () => { retry = 0; setStatus('idle'); };
+
+  sock.onmessage = ev => {
+    const e = JSON.parse(ev.data);
+    if (e.seq !== undefined) {
+      if (state.seen.has(e.seq)) return;   // replay overlaps a live event
+      state.seen.add(e.seq);
+    }
+    handlers[e.type]?.(e);
+  };
+
+  sock.onclose = () => {
+    setStatus('offline');
+    retry = Math.min(retry + 1, 6);
+    setTimeout(connect, retry * 500);
+  };
+
+  sock.onerror = () => sock.close();
+}
+
+function send(action, value) {
+  if (sock?.readyState === WebSocket.OPEN) {
+    sock.send(JSON.stringify({ action, value }));
+  }
+}
+$('#level').onchange = e => send('set_level', e.target.value);
+$('#scenario').onchange = e => send('set_scenario', e.target.value);
+
+connect();
+</script>
+</body>
+</html>

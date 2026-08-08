@@ -1,0 +1,20 @@
+# Deliberately NO torch. Whisper runs on CTranslate2, Piper and the VAD run on
+# onnxruntime. Installing torch is what caused the torchaudio ABI clash — and it
+# costs ~3 GB for a 2 MB VAD. Don't add it back.
+
+faster-whisper>=1.0.3
+piper-tts>=1.2.0
+onnxruntime>=1.17
+sounddevice>=0.4.6
+numpy>=1.26
+httpx>=0.27
+PyYAML>=6.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+websockets>=12.0
+
+# CUDA runtime for CTranslate2. torch used to supply these DLLs implicitly;
+# app/cuda_paths.py registers them on the Windows DLL search path at startup.
+# Drop both lines if running Whisper on CPU (stt.device: cpu).
+nvidia-cublas-cu12
+nvidia-cudnn-cu12

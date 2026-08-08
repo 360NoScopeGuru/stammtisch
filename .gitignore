@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Model weights live on D: — see paths.models_root in config.yaml
+models/
+*.onnx
+*.onnx.json
+*.part
+
+# Practice sessions are personal
+sessions/
+
+*.log
+.env
+.idea/
+.vscode/

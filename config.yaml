@@ -1,0 +1,57 @@
+# Stammtisch configuration.
+# Model weights live off the C: drive — C: only has ~18 GB free.
+
+paths:
+  models_root: D:/stammtisch-models
+  sessions_dir: ./sessions
+
+audio:
+  # Whisper wants 16 kHz mono. Piper emits at its own rate (see tts.sample_rate).
+  input_sample_rate: 16000
+  frame_ms: 32              # Silero VAD operates on 512-sample frames @ 16 kHz
+  input_device: null        # null = system default; set to an index from list_devices()
+  output_device: null
+
+vad:
+  threshold: 0.5            # Silero speech probability. Raise if it triggers on noise.
+  min_speech_ms: 250        # ignore blips shorter than this
+  end_silence_ms: 450       # silence needed to call the turn over — the main latency knob
+  max_utterance_ms: 30000   # hard cap so a runaway stream can't grow forever
+  pre_roll_ms: 300          # audio retained from *before* trigger, so we don't clip onsets
+
+stt:
+  model: large-v3-turbo     # distil-large-v3 is faster; medium if VRAM gets tight
+  device: cuda
+  compute_type: float16
+  language: de
+  beam_size: 1              # greedy — beam search costs latency for little gain here
+  vad_filter: false         # we already gate with Silero upstream
+
+llm:
+  # Any OpenAI-compatible server: Ollama (11434), LM Studio (1234), llama.cpp (8080).
+  base_url: http://localhost:11434/v1
+  api_key: not-needed
+  model: gemma3:12b
+  temperature: 0.7
+  max_tokens: 300           # tutor turns should be short; long ones kill conversation flow
+  # A second, smaller model handles corrections off the critical path.
+  # Point at the same model if you'd rather not hold two in VRAM.
+  corrector_model: gemma3:12b
+  corrector_temperature: 0.1
+
+tts:
+  voice: de_DE-thorsten-high
+  sample_rate: 22050        # must match the voice's ONNX config
+  length_scale: 1.0         # >1.0 = slower speech. Bump to 1.15 for A1/A2 learners.
+  noise_scale: 0.667
+  noise_w: 0.8
+
+tutor:
+  level: B1                 # CEFR: A1 A2 B1 B2 C1
+  scenario: freies_gespraech
+  history_turns: 12         # conversation turns kept in context
+  # Let the user interrupt the tutor mid-sentence. Requires headphones: with
+  # laptop speakers the tutor hears itself and interrupts itself. There is a
+  # transcript-similarity echo guard as a backstop either way, but on speakers
+  # this is best left off.
+  barge_in: false
