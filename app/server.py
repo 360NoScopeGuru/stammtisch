@@ -65,13 +65,39 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/state")
     async def state() -> JSONResponse:
+        prog = tutor.progress
+        course = tutor.course
         return JSONResponse(
             {
                 "level": cfg.tutor.level,
                 "scenario": tutor.scenario.key,
+                "title": tutor.scenario.title,
                 "corrections": tutor.session.all_corrections,
                 "vocab": tutor.session.all_vocab,
                 "transcript": tutor.session.transcript,
+                "course": None if not course else {
+                    "title": course.title,
+                    "level": course.level,
+                    "current": tutor.chapter.number if tutor.chapter else None,
+                    "chapters": [
+                        {"number": c.number, "title": c.title,
+                         "topics": c.topics, "grammar": c.grammar,
+                         "can_do": c.can_do}
+                        for c in course.chapters
+                    ],
+                },
+                "progress": {
+                    "sessions": prog.sessions,
+                    "turns": prog.turns,
+                    "minutes": round(prog.minutes),
+                    "words": len(prog.vocab),
+                    "last_seen": prog.last_seen,
+                    "mistakes": [
+                        {"wrong": m.wrong, "right": m.right, "count": m.count,
+                         "explanation": m.explanation}
+                        for m in prog.recurring(limit=8)
+                    ],
+                },
             }
         )
 

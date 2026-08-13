@@ -170,8 +170,14 @@ not read it out as a list.
 """
 
 
+HISTORY_BLOCK = """\
+
+{history}
+"""
+
+
 def system_prompt(mode: str, level: str, scenario_description: str,
-                  reference: str = "") -> str:
+                  reference: str = "", history: str = "") -> str:
     level_text = LEVELS.get(level.upper(), LEVELS["A1"])
     template = PRACTICE_SYSTEM if mode == PRACTICE else MENTOR_SYSTEM
     prompt = template.format(
@@ -181,6 +187,8 @@ def system_prompt(mode: str, level: str, scenario_description: str,
         token_practice=TOKEN_PRACTICE,
         token_mentor=TOKEN_MENTOR,
     )
+    if history.strip():
+        prompt += "\n" + HISTORY_BLOCK.format(history=history.strip())
     if reference.strip():
         prompt += "\n" + REFERENCE_BLOCK.format(reference=reference.strip())
     return prompt

@@ -86,6 +86,68 @@ will need their own parser; the failure is loud, not silent.
 > Ingested courses land in `courses/`, which is **gitignored** — the content is
 > copyrighted and this repository is public. `*.pdf` is ignored too.
 
+## It remembers you
+
+Sessions are aggregated into a picture of what you have actually done, rebuilt
+from the saved session files every launch:
+
+```powershell
+python main.py --progress
+```
+
+```
+  6 sessions · 84 turns · 152 min total
+  Last session: 2026-08-12 (chapter 3)
+
+  Keeps getting wrong:
+    «der» → «das»   (6x)
+      e.g. Ich sehe der Buch.
+```
+
+The tutor is given a short version of this, so it stops re-teaching «Guten
+Morgen» every launch, picks up at the chapter you stopped on, and works a
+recurring mistake back in when the conversation gives it an opening.
+
+The interesting part is finding those mistakes. Grouping corrections by their
+sentence finds nothing — nobody makes the same mistake in the same words twice.
+Grouping by *the words that changed inside them* turns twenty scattered
+corrections into "der → das, six times", which is a lesson. A one-off is not
+promoted to a habit, and a sentence rewritten end to end is not a pattern at
+all.
+
+Progress is **derived from the sessions, never stored beside them**. A parallel
+store would drift the first time a session was deleted or hand-edited.
+
+## Repeat after me
+
+Say *"let me try that"*, or press **Say it back**, and the tutor repeats its
+last German phrase for you to say back. Your attempt is scored word by word:
+
+```
+Ich   hätte   gern   ein   B̶r̶ö̶t̶c̶h̶e̶n̶            80% · Close — try again
+```
+
+> Close. The word «Brötchen» did not quite come through — try that one again.
+
+**This is not pronunciation scoring and is not sold as one.** Whisper returns
+text, not phonemes; it cannot tell you your vowel was too far forward. Real
+scoring needs forced alignment and a goodness-of-pronunciation model, which
+means torch, which this project does not have.
+
+What it does tell you is whether a German speech recogniser, listening in
+German, heard the words you were aiming at. Weaker claim, genuinely useful: if
+Whisper hears «Brötchen» when you say it, you said something close enough to be
+understood.
+
+The failure to design against is the **false negative** — telling someone their
+German was wrong when the recogniser merely spelled it differently. So
+«heisse»/«heiße» and «Brotchen»/«Brötchen» are folded together before
+comparison, and the attempt is pinned to German rather than auto-detected: a
+shaky first attempt otherwise gets read as English and scored as nonsense.
+
+Three goes at one phrase, then it moves on. Drilling past that stops being
+practice and becomes a wall.
+
 ## Requirements
 
 - NVIDIA GPU with ~6 GB free VRAM
@@ -151,6 +213,8 @@ Four scripts, none of which need a microphone:
 | `test_segments.py` | segmentation, guillemet-aware splitting, merging | nothing |
 | `test_langid.py` | language classification + every real routing regression | nothing |
 | `test_intents.py` | mode-switch detection, including false positives | nothing |
+| `test_drills.py` | repeat-after-me scoring, and every false negative | nothing |
+| `test_progress.py` | cross-session memory, recurring-mistake detection | nothing |
 | `test_curriculum.py` | textbook parsing and chapter/grammar alignment | nothing |
 | `test_corrections.py` | name protection, and the corrections that must survive it | nothing |
 | `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
@@ -177,6 +241,7 @@ python main.py --web                            # browser UI at :8420
 python main.py --mode practice --level A2       # skip straight to German
 python main.py --chapter 3                      # chapter 3 of your textbook
 python main.py --list-chapters
+python main.py --progress                       # what you have covered so far
 python main.py --scenario baeckerei
 python main.py --list-scenarios
 python main.py --list-devices                   # if the wrong mic is picked up
@@ -210,6 +275,9 @@ What it gives you over the terminal:
   a second or two after the turn, which in a scrolling terminal means they show
   up detached from the sentence they refer to.
 - A running vocabulary list and session stats.
+- The current chapter's grammar and objectives, and a chapter switcher.
+- Your recurring mistakes across every past session.
+- **Say it back**: drill the tutor's last German phrase, scored word by word.
 - Level and scenario switching mid-session. Changing scenario clears history and
   speaks the new opener; changing level keeps the conversation and just shifts
   register.

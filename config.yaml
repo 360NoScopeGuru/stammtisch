@@ -75,7 +75,8 @@ tutor:
   #   python scripts/ingest_textbook.py "path/to/book.pdf"
   # Then set chapter to the one your class is on. 0 uses `scenario` instead.
   course: ""                # file stem in paths.courses_dir; blank = the only one
-  chapter: 1
+  chapter: 0                # 0 with resume:true means "carry on where I left off"
+  resume: true              # start at the chapter the last session ended on
   history_turns: 12         # conversation turns kept in context
   # Let the user interrupt the tutor mid-sentence. Requires headphones: with
   # laptop speakers the tutor hears itself and interrupts itself. There is a

@@ -5,6 +5,7 @@
     python main.py --scenario baeckerei --level A2
     python main.py --chapter 3               # teach chapter 3 of your textbook
     python main.py --list-chapters
+    python main.py --progress               # what you have covered so far
     python main.py --list-scenarios
     python main.py --list-devices
 """
@@ -16,7 +17,7 @@ import asyncio
 import logging
 import sys
 
-from app import curriculum, scenarios
+from app import curriculum, progress, scenarios
 from app.config import load_config
 from app.events import EventBus
 from app.session import ConversationRunner
@@ -39,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--list-scenarios", action="store_true")
     p.add_argument("--list-chapters", action="store_true",
                    help="show the ingested textbook's chapters")
+    p.add_argument("--progress", action="store_true",
+                   help="what you have covered so far, across all sessions")
     p.add_argument("--list-devices", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args()
@@ -126,9 +129,18 @@ def main() -> int:
             print(f"Unknown scenario {args.scenario!r}.\n{scenarios.listing()}")
             return 2
         cfg.tutor.scenario = args.scenario
-        cfg.tutor.chapter = 0     # an explicit scenario wins over the book
+        # An explicit scenario wins over the book, and must not be undone by
+        # resume quietly putting the last chapter back.
+        cfg.tutor.chapter = 0
+        cfg.tutor.resume = False
     if args.chapter is not None:
         cfg.tutor.chapter = args.chapter
+        if args.chapter == 0:
+            cfg.tutor.resume = False
+
+    if args.progress:
+        print(progress.build(cfg.sessions_path).summary())
+        return 0
 
     if args.list_chapters:
         course = curriculum.find(cfg.courses_path, cfg.tutor.course)

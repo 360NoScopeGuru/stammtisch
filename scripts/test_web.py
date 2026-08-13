@@ -44,6 +44,27 @@ class StubTutor:
         self.levels: list[str] = []
         self.scenarios: list[str] = []
         self.modes: list[str] = []
+        self.chapters: list[int] = []
+        self.last_german = "Ich hätte gern ein Brötchen"
+        self.chapter = types.SimpleNamespace(number=3)
+        self.course = types.SimpleNamespace(
+            title="Akademie Deutsch A1+", level="A1",
+            chapters=[types.SimpleNamespace(
+                number=3, title="LECKER!", topics=["Essen"],
+                grammar=["Nullartikel"], can_do=["Bestellungen aufgeben"])],
+        )
+        self.progress = types.SimpleNamespace(
+            sessions=4, turns=51, minutes=88.0, last_seen="2026-08-12",
+            vocab={"danke": None, "bitte": None},
+            recurring=lambda limit=8: [
+                types.SimpleNamespace(wrong="der", right="das", count=6,
+                                      explanation="Buch is neuter")
+            ],
+        )
+
+    def set_chapter(self, n):
+        self.chapters.append(n)
+        return False  # skip the opener path, which would need audio
 
     @property
     def mode(self):
@@ -97,6 +118,21 @@ def main() -> int:
             r = client.get("/api/state")
             check("GET /api/state returns JSON", r.status_code == 200
                   and "level" in r.json())
+
+            # The course and the cross-session history are true before the
+            # first turn, so the page fetches them rather than waiting for an
+            # event that would never arrive on a quiet session.
+            s = r.json()
+            check("state carries the course", bool(s.get("course"))
+                  and s["course"]["current"] == 3, f"course={s.get('course')}")
+            check("state carries chapter detail",
+                  s["course"]["chapters"][0]["grammar"] == ["Nullartikel"])
+            check("state carries cross-session progress",
+                  s.get("progress", {}).get("sessions") == 4
+                  and s["progress"]["words"] == 2, f"progress={s.get('progress')}")
+            check("recurring mistakes reach the browser",
+                  s["progress"]["mistakes"][0]["wrong"] == "der"
+                  and s["progress"]["mistakes"][0]["count"] == 6)
 
             # Publish BEFORE connecting: a late browser must still see it.
             bus.publish("user_turn", text="Ich hätte gern ein Brot.")
@@ -152,6 +188,26 @@ def main() -> int:
                 ws.send_json({"action": "set_level", "value": "B2"})
                 ws.send_json({"action": "set_scenario", "value": "arzttermin"})
                 ws.send_json({"action": "set_mode", "value": "practice"})
+                ws.send_json({"action": "set_chapter", "value": 5})
+
+                # A drill result must survive the wire with its per-word
+                # verdicts: the score alone tells the learner nothing they can
+                # act on, the words are the whole feature.
+                bus.publish("drill_result", target="Ich hätte gern ein Brötchen",
+                            heard="Ich hätte gern ein Brot", score=0.8,
+                            verdict="close",
+                            words=[{"target": "Brötchen", "heard": "Brot",
+                                    "status": "wrong"}])
+                drill = None
+                for _ in range(20):
+                    e = ws.receive_json()
+                    if e["type"] == "drill_result":
+                        drill = e
+                        break
+                check("drill result delivered with per-word verdicts",
+                      bool(drill) and drill["verdict"] == "close"
+                      and drill["words"][0]["status"] == "wrong"
+                      and drill["words"][0]["heard"] == "Brot")
                 # Round-trip a publish to prove both sends were processed.
                 bus.publish("ping")
                 for _ in range(20):
@@ -170,6 +226,8 @@ def main() -> int:
                   f"got {tutor.levels}")
             check("set_scenario control reached the tutor",
                   "arzttermin" in tutor.scenarios, f"got {tutor.scenarios}")
+            check("set_chapter control reached the tutor",
+                  tutor.chapters == [5], f"chapters={tutor.chapters}")
             check("set_mode control reached the tutor",
                   "practice" in tutor.modes, f"got {tutor.modes}")
 

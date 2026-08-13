@@ -13,9 +13,9 @@ import logging
 import re
 import time
 
-from . import scenarios
+from . import drills, scenarios
 from .events import EventBus
-from .intents import requested_mode
+from .intents import requested_mode, wants_drill
 from .prompts import MENTOR, PRACTICE
 from .segments import strip_markers
 from .tutor import Tutor
@@ -31,6 +31,10 @@ IDLE, LISTENING, THINKING, SPEAKING = "idle", "listening", "thinking", "speaking
 # closely matches what we just said, and arrives soon after we said it, is echo.
 ECHO_SIMILARITY = 0.75
 ECHO_WINDOW_S = 2.5
+
+# How many goes at one phrase before moving on. Drilling the same words past
+# this stops being practice and starts being a wall.
+DRILL_MAX_ATTEMPTS = 3
 
 
 def _normalize(text: str) -> str:
@@ -62,6 +66,10 @@ class ConversationRunner:
         self._last_spoken = ""
         self._spoke_at = 0.0
         self.echo_rejections = 0
+        # Repeat-after-me state. While a target is set, the next thing heard is
+        # an attempt at it rather than a turn in the conversation.
+        self._drill_target = ""
+        self._drill_attempts = 0
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -102,6 +110,60 @@ class ConversationRunner:
         self.tutor.session.add_turn("assistant", plain)
         self.bus.publish("tutor_turn", text=opener, latency_ms=None, opener=True)
 
+    # ---- repeat-after-me ----------------------------------------------
+
+    async def _start_drill(self, target: str) -> None:
+        """Say the phrase, then wait for the learner to say it back."""
+        self._drill_target = target
+        self._drill_attempts = 0
+        self.bus.publish("drill_start", target=target)
+        self.bus.publish("status", state=SPEAKING)
+        await self.tutor.say(f"Say this after me. «{target}»")
+        # Deliberately not marked as spoken for the echo guard: the learner is
+        # about to repeat this phrase on purpose, and the guard would throw the
+        # attempt away as an echo of the prompt.
+        self.bus.publish("status", state=LISTENING)
+
+    def _end_drill(self) -> None:
+        self._drill_target = ""
+        self._drill_attempts = 0
+
+    async def _handle_attempt(self, text: str) -> None:
+        target = self._drill_target
+        attempt = drills.compare(target, text)
+        self._drill_attempts += 1
+
+        self.bus.publish(
+            "drill_result",
+            target=target,
+            heard=text,
+            score=attempt.score,
+            verdict=attempt.verdict,
+            words=[{"target": w.target, "heard": w.heard, "status": w.status}
+                   for w in attempt.results],
+        )
+        log.info("drill %.2f (%s): %r -> %r",
+                 attempt.score, attempt.verdict, target, text)
+
+        feedback = attempt.feedback()
+        keep_going = (attempt.verdict != "good"
+                      and self._drill_attempts < DRILL_MAX_ATTEMPTS)
+        if keep_going:
+            spoken = f"{feedback} «{target}»"
+        else:
+            if attempt.verdict != "good":
+                # Three goes is enough. Dwelling on one phrase is how a lesson
+                # turns into a wall, and it can be revisited later.
+                feedback += " Let us come back to that one another time."
+            spoken = feedback
+            self._end_drill()
+
+        self.bus.publish("status", state=SPEAKING)
+        await self.tutor.say(spoken)
+        self.tutor.session.add_turn("assistant", strip_markers(spoken))
+        if not keep_going:
+            self.bus.publish("drill_end", target=target)
+
     def _mark_spoken(self, text: str) -> None:
         self._last_spoken = text
         self._spoke_at = time.monotonic()
@@ -135,6 +197,13 @@ class ConversationRunner:
                 self.bus.publish("scenario_changed",
                                  scenario=self.tutor.scenario.key)
                 await self._speak_opener()
+        elif action == "drill":
+            target = str(msg.get("value", "")) or self.tutor.last_german
+            if target:
+                await self._start_drill(target)
+        elif action == "stop_drill":
+            self._end_drill()
+            self.bus.publish("drill_end", target="")
         elif action == "set_mode":
             await self._switch_mode(str(msg.get("value", "")))
         elif action == "stop":
@@ -189,16 +258,38 @@ class ConversationRunner:
             # In mentor mode the learner speaks mostly English, so let Whisper
             # detect. In practice mode pin it to German: the learner's accent is
             # a beginner's and auto-detect drifts to English on short replies.
-            lang = None if self.tutor.mode == MENTOR else self.tutor.cfg.stt.language
+            # A drill attempt is German by definition — the learner was just
+            # asked to say a German phrase — so pin it there too, or a shaky
+            # first attempt gets detected as English and scored as nonsense.
+            drilling = bool(self._drill_target)
+            lang = (self.tutor.cfg.stt.language
+                    if drilling or self.tutor.mode != MENTOR else None)
             text = await asyncio.to_thread(self.tutor.stt.transcribe, audio, lang)
             if not text or len(text) < 2:
                 continue
 
-            if self._reject_as_echo(text):
+            # Echo rejection is skipped mid-drill: the learner is repeating the
+            # phrase the tutor just said, so of course it matches.
+            if not drilling and self._reject_as_echo(text):
+                continue
+
+            if drilling:
+                self.tutor.session.add_turn("user", text)
+                self.bus.publish("user_turn", text=text, drill=True)
+                await self._handle_attempt(text)
+                await self._drain_controls()
                 continue
 
             self.tutor.session.add_turn("user", text)
             self.bus.publish("user_turn", text=text)
+
+            # "Let me try that" drills the last German phrase rather than
+            # sending it to the model, which would answer the request in words
+            # instead of actually making the learner say anything.
+            if wants_drill(text) and self.tutor.last_german:
+                await self._start_drill(self.tutor.last_german)
+                await self._drain_controls()
+                continue
 
             # Only grade German. Running the corrector on an English sentence
             # produced feedback like 'Hof Arjo' -> 'Haus Arjo': confident,
