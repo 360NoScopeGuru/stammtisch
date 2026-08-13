@@ -1,0 +1,60 @@
+# The eleven test scripts that need nothing but Python.
+#
+# Everything requiring a GPU, a microphone, model weights or a running LLM
+# stays out: test_pipeline.py and test_prompt.py are for a real machine, and a
+# CI run that skipped half of what it claimed to check would be worse than no
+# CI at all.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Deliberately not requirements.txt: that pulls CUDA wheels, Piper and
+      # faster-whisper, none of which these tests touch and all of which take
+      # minutes. The scripts below import only the pure-Python layers.
+      - name: Install what the model-free tests actually need
+        run: pip install pyyaml numpy pypdf
+
+      - name: Run the model-free suite
+        run: |
+          set -e
+          for t in test_sentences test_segments test_langid test_intents \
+                   test_corrections test_curriculum test_progress test_drills \
+                   test_persistence; do
+            echo "::group::$t"
+            python "scripts/$t.py"
+            echo "::endgroup::"
+          done
+
+      # These need the async and web layers, so they get their own install step
+      # rather than making the fast tests wait for it. `sounddevice` is left
+      # out on purpose: it needs libportaudio, and the one place it is imported
+      # already treats an import failure as "no audio device", which is exactly
+      # what a CI runner is.
+      - name: Install the async and web layers
+        # onnxruntime is a genuine dependency of the VAD, which the
+        # conversation loop imports. It is pure pip with no system libraries,
+        # unlike sounddevice, which is why that one is imported lazily instead.
+        run: pip install fastapi httpx onnxruntime
+
+      - name: Run the loop and web tests
+        run: |
+          set -e
+          for t in test_loop test_web test_doctor; do
+            echo "::group::$t"
+            python "scripts/$t.py"
+            echo "::endgroup::"
+          done

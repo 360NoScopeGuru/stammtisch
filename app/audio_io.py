@@ -14,13 +14,25 @@ import queue
 import threading
 
 import numpy as np
-import sounddevice as sd
 
 from .config import Config
 from .vad import FRAME_SAMPLES as SILERO_FRAME
 from .vad import SileroVad
 
 log = logging.getLogger(__name__)
+
+
+def _sd():
+    """Import sounddevice only when audio is actually opened.
+
+    At module level this made the whole app unimportable without a working
+    PortAudio — including `--doctor`, `--progress` and `--list-chapters`, none
+    of which touch a sound device. The diagnostic that tells you your audio is
+    broken must not itself need the audio library to load, and CI must be able
+    to exercise the conversation loop without a sound card.
+    """
+    import sounddevice as sd
+    return sd
 
 
 class MicListener:
@@ -45,7 +57,7 @@ class MicListener:
         # Set when the user interrupts during playback.
         self.interrupted = threading.Event()
 
-        self._stream: sd.InputStream | None = None
+        self._stream = None   # sd.InputStream, opened in start()
         self._reset_state()
 
         pre_roll_frames = max(1, int(cfg.vad.pre_roll_ms / cfg.audio.frame_ms))
@@ -69,7 +81,7 @@ class MicListener:
         return self.async_utterances
 
     def start(self) -> None:
-        self._stream = sd.InputStream(
+        self._stream = _sd().InputStream(
             samplerate=self.sr,
             channels=1,
             dtype="float32",
@@ -175,10 +187,10 @@ class Speaker:
         self._drained = threading.Event()
         self._drained.set()
         self._thread: threading.Thread | None = None
-        self._stream: sd.OutputStream | None = None
+        self._stream = None   # sd.OutputStream, opened in start()
 
     def start(self) -> None:
-        self._stream = sd.OutputStream(
+        self._stream = _sd().OutputStream(
             samplerate=self.sr,
             channels=1,
             dtype="float32",
@@ -234,4 +246,4 @@ class Speaker:
 
 
 def list_devices() -> str:
-    return str(sd.query_devices())
+    return str(_sd().query_devices())
