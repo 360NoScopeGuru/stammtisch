@@ -298,7 +298,7 @@ The knobs that actually matter, in `config.yaml`:
 | `tts.voices` | One Piper voice per language. Swap `en` for `en_GB-alba-medium` if you prefer British English. |
 | `llm.max_tokens` | Keep it low. Long tutor turns kill conversation flow. |
 | `stt.model` | Drop to `distil-large-v3` or `medium` if VRAM gets tight. |
-| `llm.model` | The biggest latency lever. `gemma3:4b` is ~3x faster than `12b` and usually the better trade at A1/A2. |
+| `llm.model` | The biggest latency lever, and the biggest quality one. See [Choosing a model](#choosing-a-model) for measured numbers. |
 | `llm.max_tokens` | 140 by default. With barge-in off, a long reply is enforced silence. |
 | `llm.keep_alive` | Stops Ollama unloading between turns; a reload costs ~16s. |
 
@@ -442,15 +442,46 @@ There are two defences, in order of importance:
 
 Turn `barge_in` on once you're on headphones; the guard stays active either way.
 
-German quality varies a lot more than benchmarks suggest, and it is the single
-biggest driver of whether this feels useful. Worth A/B-ing yourself:
+## Choosing a model
 
-- **`gemma3:12b`** — strong European-language coverage. Good default.
-- **`mistral-nemo:12b`** — explicitly multilingual, natural-sounding German.
-- **`qwen3:14b`** — strong, occasionally stiffer register.
+German quality varies far more than benchmarks suggest, and it is the single
+biggest driver of whether this feels useful.
 
-Swap `llm.model` and talk to each for five minutes. You will hear the difference
-faster than any benchmark will tell you.
+The default is **`gemma3:12b`**. Several features here are carried entirely by
+the prompt — teaching the right textbook chapter, not translating itself during
+practice — and instruction-following is exactly where the bigger model earns
+its keep. `gemma3:4b` needed the prompt hardened twice and still glosses itself
+in brackets during practice mode, which defeats the point of practising.
+
+Measured on an RTX 5080 Laptop, on mains power, three mentor turns each:
+
+| | time to first sentence | full reply | reply length |
+|---|---|---|---|
+| `gemma3:4b`  | 485 ms | 582 ms  | 85 chars |
+| `gemma3:12b` | 929 ms | 2560 ms | 133 chars |
+
+The full-reply column matters much less than it looks, because replies are
+spoken sentence by sentence — the tutor starts talking at the first-sentence
+mark, not the last. Under a second to first audio is fine. The reply-length
+column is the real cost: 12b writes ~55% more, and with barge-in off every
+extra word is silence you have to sit through.
+
+`scripts/bench_llm.py gemma3:4b gemma3:12b` reproduces this. Run it on mains
+power or the numbers are meaningless.
+
+Others worth trying: **`mistral-nemo:12b`** (explicitly multilingual, natural
+German) and **`qwen3:14b`** (strong, occasionally stiffer register). Swap
+`llm.model`, run `test_prompt.py`, then talk to it for five minutes.
+
+The corrector deliberately points at the **same** model. Ollama then holds one
+copy rather than two — 7 GB instead of 11 on a 16 GB card — and the contention
+is negligible: a correction firing concurrently with a reply costs **+56 ms**
+(`scripts/probe_contention.py`), because the requests overlap rather than
+queueing.
+
+> With `12b` loaded, plus Whisper and Piper, this sits at about 13.5 GB of 16 GB.
+> If you also run LM Studio or another local server, check `nvidia-smi` before
+> assuming the app is at fault for being slow.
 
 ## Known limits
 

@@ -38,19 +38,23 @@ llm:
   # Any OpenAI-compatible server: Ollama (11434), LM Studio (1234), llama.cpp (8080).
   base_url: http://localhost:11434/v1
   api_key: not-needed
-  # gemma3:12b gives better German but is slow on a power-limited laptop.
-  # gemma3:4b is roughly 3x faster and usually the better trade for A1/A2,
-  # where sentences are short and correctness matters more than nuance.
-  model: gemma3:4b
+  # gemma3:12b follows instructions markedly better than 4b, which matters
+  # here because several features are carried by the prompt: teaching the
+  # right textbook chapter, and not translating itself in practice mode.
+  # It is slower, and on battery it is much slower — see "Plug the laptop in".
+  model: gemma3:12b
   temperature: 0.7
   # Short replies are not a style choice: with barge_in off the learner cannot
   # speak until the tutor stops, so every extra sentence is enforced silence.
   max_tokens: 140
   keep_alive: 30m           # Ollama unloads after 5m idle; a reload costs ~16s
   num_ctx: 8192             # system prompt + history does not fit in 4096
-  # A second, smaller model handles corrections off the critical path.
-  # Point at the same model if you'd rather not hold two in VRAM.
-  corrector_model: gemma3:4b
+  # Corrections run off the critical path. Deliberately the SAME model: Ollama
+  # then holds one copy rather than two (8 GB instead of 11 of a 16 GB card),
+  # and sharing costs almost nothing — a correction firing concurrently with a
+  # reply was measured at +56 ms (scripts/probe_contention.py). Grammar
+  # analysis is also exactly where the bigger model earns its keep.
+  corrector_model: gemma3:12b
   corrector_temperature: 0.1
 
 tts:

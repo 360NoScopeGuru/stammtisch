@@ -101,6 +101,17 @@ def main() -> int:
     for text, want_clean, want_mode in TOKEN_CASES:
         check(text[:52], extract_mode(text), (want_clean, want_mode))
 
+    print("\nclean_for_speech:")
+    from app.segments import clean_for_speech  # noqa: E402
+    check("a quoted exclamation does not end up '!.'",
+          clean_for_speech("«Guten Tag!»."), "«Guten Tag!»")
+    check("same for a question", clean_for_speech("Say «Wie geht's?»."),
+          "Say «Wie geht's?»")
+    check("an ordinary full stop is untouched",
+          clean_for_speech("Das ist gut."), "Das ist gut.")
+    check("ellipsis is not mangled",
+          clean_for_speech("Warte..."), "Warte...")
+
     print("\nstrip_markers:")
     check("removes guillemets",
           strip_markers("Say «Guten Tag» now."), "Say Guten Tag now.")

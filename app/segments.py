@@ -69,8 +69,15 @@ _STAGE_DIRECTION = re.compile(
 )
 
 
+# Guillemets leave punctuation doubled up when the quoted phrase carried its
+# own: «Guten Tag!» followed by a full stop becomes "Guten Tag!.". Harmless on
+# screen, but this text is spoken.
+_DOUBLED_PUNCT = re.compile(r"([!?])([»\"')\]]*)\s*\.")
+
+
 def clean_for_speech(text: str) -> str:
-    return _STAGE_DIRECTION.sub(" ", text).strip()
+    text = _STAGE_DIRECTION.sub(" ", text)
+    return _DOUBLED_PUNCT.sub(r"\1\2", text).strip()
 
 
 def split_segments(text: str, default_lang: str = EN) -> list[tuple[str, str]]:
