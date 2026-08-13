@@ -6,6 +6,7 @@
     python main.py --chapter 3               # teach chapter 3 of your textbook
     python main.py --list-chapters
     python main.py --progress               # what you have covered so far
+    python main.py --doctor                 # why isn't it working?
     python main.py --list-scenarios
     python main.py --list-devices
 """
@@ -17,7 +18,7 @@ import asyncio
 import logging
 import sys
 
-from app import curriculum, progress, scenarios
+from app import curriculum, doctor, progress, scenarios
 from app.config import load_config
 from app.events import EventBus
 from app.session import ConversationRunner
@@ -40,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--list-scenarios", action="store_true")
     p.add_argument("--list-chapters", action="store_true",
                    help="show the ingested textbook's chapters")
+    p.add_argument("--doctor", action="store_true",
+                   help="check every precondition and say what to fix")
     p.add_argument("--progress", action="store_true",
                    help="what you have covered so far, across all sessions")
     p.add_argument("--list-devices", action="store_true")
@@ -89,6 +92,12 @@ async def run_cli(cfg) -> int:
     except RuntimeError as e:
         print(f"\n  ⚠  {e}\n")
         return 1
+    except OSError as e:
+        # Almost always the microphone or the audio device.
+        print(f"\n  ⚠  audio device problem: {e}\n"
+              f"     python main.py --list-devices\n"
+              f"     python main.py --doctor\n")
+        return 1
     finally:
         runner.request_stop()
         tutor.speaker.cancel()
@@ -137,6 +146,11 @@ def main() -> int:
         cfg.tutor.chapter = args.chapter
         if args.chapter == 0:
             cfg.tutor.resume = False
+
+    if args.doctor:
+        checks = doctor.run_all(cfg)
+        print(doctor.report(checks))
+        return 1 if any(c.bad for c in checks) else 0
 
     if args.progress:
         print(progress.build(cfg.sessions_path).summary())

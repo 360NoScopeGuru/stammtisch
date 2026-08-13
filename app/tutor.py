@@ -113,7 +113,13 @@ class Tutor:
     async def preflight(self) -> None:
         ok, msg = await self.llm.health()
         if not ok:
-            raise RuntimeError(f"LLM preflight failed: {msg}")
+            # The most common first-run failure by a wide margin, and the least
+            # self-explanatory. Name the likely cause and the command.
+            raise RuntimeError(
+                f"cannot reach the LLM at {self.cfg.llm.base_url} — {msg}\n"
+                f"     Is the server running? For Ollama: ollama serve\n"
+                f"     Run `python main.py --doctor` to check everything."
+            )
         if err := await self.llm.pin_model():
             log.info("could not pin model (not Ollama?): %s", err)
         log.info("warming models...")

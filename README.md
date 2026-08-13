@@ -1,5 +1,7 @@
 # Stammtisch
 
+[![tests](https://github.com/360NoScopeGuru/stammtisch/actions/workflows/tests.yml/badge.svg)](https://github.com/360NoScopeGuru/stammtisch/actions/workflows/tests.yml)
+
 A local German tutor you talk to out loud. It teaches in English, practises in
 German, and reviews your mistakes afterwards. Everything runs on your own GPU —
 no API keys, no subscription, no audio leaving the machine.
@@ -195,6 +197,38 @@ ollama pull gemma3:12b
 python scripts/test_pipeline.py
 ```
 
+### When something is wrong
+
+```powershell
+python main.py --doctor
+```
+
+```
+    ok  Python             3.12.10
+    ok  packages           7 required imports present
+    ok  CUDA libraries     cublas + cudnn present
+    ok  Silero VAD         silero_vad.onnx
+  FAIL  model (reply)      gemma3:12b not pulled
+        → ollama pull gemma3:12b
+  warn  Power              running on battery
+        → plug in. On battery this GPU has run at a fifth of its speed
+          while reporting 100% utilisation
+```
+
+Under two seconds, loads nothing, opens no microphone. Every failure carries
+the command that fixes it — a `FAIL` with no fix line is just a nicer
+traceback.
+
+It checks the things that have actually gone wrong here: the LLM server being
+down, the model not being pulled, Piper voices or the VAD missing, the CUDA
+libraries that `torch` used to supply, free VRAM, free disk, whether a
+microphone exists — and **whether the laptop is on battery**, which has cost
+more debugging time in this project than any bug in the code.
+
+`scripts/test_doctor.py` deliberately breaks the configuration and checks the
+right thing fails with the right fix, because a diagnostic that only passes on
+a working machine proves nothing.
+
 > **Do not `pip install torch`.** This project has no torch dependency by
 > design. Whisper runs on CTranslate2 and both Piper and the VAD run on
 > onnxruntime. Installing torch pulls `torchaudio` at a mismatched version and
@@ -220,6 +254,7 @@ Four scripts, none of which need a microphone:
 | `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
 | `test_persistence.py` | session survives `kill -9` mid-conversation | nothing |
 | `test_web.py` | WebSocket delivery, backlog replay, controls | nothing |
+| `test_doctor.py` | the diagnostics, against deliberately broken configs | nothing |
 | `test_pipeline.py` | Piper → VAD → Whisper round trip, both voices | models |
 | `test_prompt.py` | whether the live model obeys the prompt contract | LLM |
 
@@ -244,6 +279,7 @@ python main.py --list-chapters
 python main.py --progress                       # what you have covered so far
 python main.py --scenario baeckerei
 python main.py --list-scenarios
+python main.py --doctor                         # why isn't it working?
 python main.py --list-devices                   # if the wrong mic is picked up
 ```
 
@@ -482,6 +518,11 @@ queueing.
 > With `12b` loaded, plus Whisper and Piper, this sits at about 13.5 GB of 16 GB.
 > If you also run LM Studio or another local server, check `nvidia-smi` before
 > assuming the app is at fault for being slow.
+
+## Where this is going
+
+See [ROADMAP.md](ROADMAP.md) — what is planned, and what this deliberately
+will not become (no cloud, no accounts, no torch, no shipped textbooks).
 
 ## Known limits
 
