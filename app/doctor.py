@@ -49,6 +49,15 @@ def _run(cmd: list[str], timeout: float = 4.0) -> str:
 
 # --- individual checks ---------------------------------------------------
 
+def _has_module(name: str) -> bool:
+    """`find_spec` returns None for a missing leaf but *raises* when the parent
+    package is absent, which is precisely the machine this has to run on."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def check_python() -> Check:
     import sys
     v = sys.version_info
@@ -74,15 +83,15 @@ def check_packages() -> list[Check]:
     }
     out = []
     for mod, why in wanted.items():
-        if importlib.util.find_spec(mod) is None:
+        if not _has_module(mod):
             out.append(Check(f"package {mod}", FAIL, f"missing ({why})",
                              "pip install -r requirements.txt"))
-    if importlib.util.find_spec("pypdf") is None:
+    if not _has_module("pypdf"):
         out.append(Check("package pypdf", WARN,
                          "missing — textbook ingestion will not run",
                          "pip install pypdf"))
     # The one package that must NOT be here.
-    if importlib.util.find_spec("torch") is not None:
+    if _has_module("torch"):
         out.append(Check("torch", WARN, "installed",
                          "this project has no torch dependency and a "
                          "mismatched torchaudio breaks the VAD import — "
@@ -258,8 +267,7 @@ def check_cuda_dlls(cfg: Config) -> Check:
     """Whisper on CUDA needs cuBLAS and cuDNN, which torch used to supply."""
     if cfg.stt.device != "cuda":
         return Check("CUDA libraries", OK, f"not needed (device={cfg.stt.device})")
-    missing = [n for n in ("nvidia.cublas", "nvidia.cudnn")
-               if importlib.util.find_spec(n) is None]
+    missing = [n for n in ("nvidia.cublas", "nvidia.cudnn") if not _has_module(n)]
     if missing:
         return Check("CUDA libraries", FAIL, ", ".join(missing) + " missing",
                      "pip install nvidia-cublas-cu12 nvidia-cudnn-cu12")

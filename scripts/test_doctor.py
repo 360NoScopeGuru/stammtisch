@@ -96,6 +96,18 @@ def main() -> int:
     c = doctor.check_cuda_dlls(cfg)
     check("not required on cpu", c.status == doctor.OK, c.detail)
 
+    # find_spec returns None for a missing leaf but *raises* when the parent
+    # package is absent — which is exactly a machine with no CUDA, i.e. the
+    # machine most likely to be running the doctor. This crashed CI.
+    check("probing a package whose parent does not exist does not raise",
+          doctor._has_module("nvidia.cublas") in (True, False))
+    check("a wholly absent namespace is just False",
+          doctor._has_module("definitely_not_installed.sub"), False)
+    cfg.stt.device = "cuda"
+    c = doctor.check_cuda_dlls(cfg)
+    check("the cuda check returns a verdict either way",
+          c.status in (doctor.OK, doctor.FAIL), c.status)
+
     print("\nno course ingested:")
     cfg = load_config()
     with tempfile.TemporaryDirectory() as td:
