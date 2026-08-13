@@ -45,7 +45,10 @@ jobs:
       # already treats an import failure as "no audio device", which is exactly
       # what a CI runner is.
       - name: Install the async and web layers
-        run: pip install fastapi httpx
+        # onnxruntime is a genuine dependency of the VAD, which the
+        # conversation loop imports. It is pure pip with no system libraries,
+        # unlike sounddevice, which is why that one is imported lazily instead.
+        run: pip install fastapi httpx onnxruntime
 
       - name: Run the loop and web tests
         run: |

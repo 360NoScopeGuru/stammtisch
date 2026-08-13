@@ -21,8 +21,10 @@ import sys
 from app import curriculum, doctor, progress, scenarios
 from app.config import load_config
 from app.events import EventBus
-from app.session import ConversationRunner
-from app.tutor import Tutor
+
+# Tutor and ConversationRunner pull in onnxruntime, sounddevice and the model
+# stack. The informational commands below (--doctor above all) must work when
+# some of that is missing or broken, so they are imported where they are used.
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +78,9 @@ async def print_events(bus: EventBus) -> None:
 
 
 async def run_cli(cfg) -> int:
+    from app.session import ConversationRunner
+    from app.tutor import Tutor
+
     bus = EventBus()
     tutor = Tutor(cfg, bus=bus)
     runner = ConversationRunner(tutor, bus)
