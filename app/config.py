@@ -16,6 +16,7 @@ class PathsCfg:
     models_root: str = "D:/stammtisch-models"
     sessions_dir: str = "./sessions"
     courses_dir: str = "./courses"
+    homework_dir: str = "./homework"
 
 
 @dataclass
@@ -133,6 +134,11 @@ class Config:
     @property
     def courses_path(self) -> Path:
         p = Path(self.paths.courses_dir).expanduser()
+        return p if p.is_absolute() else REPO_ROOT / p
+
+    @property
+    def homework_path(self) -> Path:
+        p = Path(self.paths.homework_dir).expanduser()
         return p if p.is_absolute() else REPO_ROOT / p
 
 

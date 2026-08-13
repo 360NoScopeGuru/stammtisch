@@ -27,6 +27,8 @@ Three things can be better, and none of them are "a bigger model":
 | Repeat-after-me | word-by-word scoring of a spoken attempt |
 | Web UI | transcript, corrections, lesson panel, drill view |
 | Session persistence | written every turn, atomically, survives a kill |
+| Homework | closed exercises marked by rules, open ones by the model |
+| `--doctor` | every precondition checked, each failure carrying its fix |
 
 ## Next
 
@@ -47,23 +49,18 @@ Ollama is not running, or a slow session because the laptop is on battery.
 - **CI** — GitHub Actions running the model-free suite on every push. Eleven
   scripts that need nothing but Python are worth running automatically.
 
-### 2. Homework
+### 2. Homework — next steps
 
-The tutor talks. It does not yet make you *work*.
+The terminal flow works: set, answer, mark. What is still missing:
 
-- Assign a small set of exercises from the current chapter — gap-fill,
-  translation, sentence-building, a short written piece.
-- You do them in your own time, in the web UI or the terminal.
-- It marks them, explains what went wrong, and the mistakes join the same
-  cross-session store that already tracks spoken errors.
-
-**Honest limitation:** the workbook PDF has no answer key — the `Lösungen`
-hits in it are the word "solutions" inside exercise instructions, not a marking
-section. So grading is a model judging free-form German. That is fine for
-"you used the dative here and should have used the accusative", and it is not
-fine for anything that pretends to be an exam mark. Exercises with a
-mechanically checkable answer (gap-fill from a word bank, conjugation tables)
-should be checked mechanically, and only the open-ended ones sent to the model.
+- **A web UI panel**, so answering is typing into boxes rather than a sequence
+  of terminal prompts. This is the part that makes it something you would
+  actually do on a laptop in the evening.
+- **Homework mistakes feeding the cross-session store**, so a fault made in
+  writing counts the same as one made out loud. Right now `progress.py` only
+  reads sessions.
+- **Seeding exercises from the workbook's own prompts**, which are real and
+  well-graded, rather than always inventing them.
 
 ### 3. Learning that actually compounds
 

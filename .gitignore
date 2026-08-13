@@ -13,6 +13,7 @@ sessions/
 
 # Courses are extracted from copyrighted textbooks. This repo is public.
 courses/
+homework/
 *.pdf
 
 *.log

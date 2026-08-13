@@ -6,6 +6,7 @@
     python main.py --chapter 3               # teach chapter 3 of your textbook
     python main.py --list-chapters
     python main.py --progress               # what you have covered so far
+    python main.py --homework new           # set written work; then --homework do
     python main.py --doctor                 # why isn't it working?
     python main.py --list-scenarios
     python main.py --list-devices
@@ -18,7 +19,7 @@ import asyncio
 import logging
 import sys
 
-from app import curriculum, doctor, progress, scenarios
+from app import curriculum, doctor, homework, progress, scenarios
 from app.config import load_config
 from app.events import EventBus
 
@@ -45,6 +46,9 @@ def parse_args() -> argparse.Namespace:
                    help="show the ingested textbook's chapters")
     p.add_argument("--doctor", action="store_true",
                    help="check every precondition and say what to fix")
+    p.add_argument("--homework", nargs="?", const="show",
+                   choices=["show", "new", "do", "mark"],
+                   help="show / set / answer / mark written work")
     p.add_argument("--progress", action="store_true",
                    help="what you have covered so far, across all sessions")
     p.add_argument("--list-devices", action="store_true")
@@ -112,6 +116,87 @@ async def run_cli(cfg) -> int:
     return 0
 
 
+async def run_homework(cfg, action: str) -> int:
+    """Set, answer or mark written work from the terminal.
+
+    Deliberately usable without the microphone, Whisper or Piper: homework is
+    the part you do on a train. Only `new` and `mark` need the LLM at all.
+    """
+    from app.llm import LlmClient
+    from app.tutor import Tutor
+
+    current = homework.latest(cfg.homework_path)
+
+    if action == "show":
+        if current is None:
+            print("\n  No homework yet. Set some with:  python main.py "
+                  "--homework new\n")
+            return 0
+        print(current.as_text(show_answers=current.is_marked))
+        if not current.submitted:
+            print("  Answer it with:  python main.py --homework do\n")
+        return 0
+
+    if action in ("do", "mark") and current is None:
+        print("\n  No homework yet. Set some with:  python main.py "
+              "--homework new\n")
+        return 0
+
+    # Answering needs nobody but the learner, so do it before waking the LLM.
+    if action == "do":
+        print(current.as_text())
+        print("  Type each answer and press Enter. Leave blank to skip.\n")
+        given = []
+        for i, ex in enumerate(current.exercises):
+            print(f"  {i + 1}. {ex.prompt}")
+            given.append(input("     > ").strip())
+        current.submit(given)
+        homework.save(current, cfg.homework_path)
+        print("\n  Saved. Marking...")
+        action = "mark"
+    elif action == "mark" and not current.submitted:
+        print("\n  Nothing handed in yet. Answer it with:  python main.py "
+              "--homework do\n")
+        return 0
+
+    client = LlmClient(cfg)
+    ok, msg = await client.health()
+    if not ok:
+        print(f"\n  cannot reach the LLM at {cfg.llm.base_url} - {msg}\n"
+              f"     For Ollama: ollama serve\n"
+              f"     python main.py --doctor\n")
+        await client.aclose()
+        return 1
+
+    # Build just enough Tutor to reach set_homework/mark_homework, without
+    # loading Whisper, Piper or opening the microphone.
+    tutor = Tutor.__new__(Tutor)
+    tutor.cfg, tutor.llm, tutor.bus = cfg, client, EventBus()
+    tutor.course = curriculum.find(cfg.courses_path, cfg.tutor.course)
+    tutor.progress = progress.build(cfg.sessions_path)
+    cfg.tutor.chapter = tutor.resume_chapter()
+    tutor.chapter = tutor._resolve_chapter(cfg.tutor.chapter)
+    tutor.scenario = tutor._scenario_for(tutor.chapter)
+
+    try:
+        if action == "new":
+            print(f"\n  Setting homework on {tutor.scenario.title}...")
+            assignment = await tutor.set_homework()
+            if assignment is None:
+                print("  The model did not produce anything usable. "
+                      "Try again.\n")
+                return 1
+            print(assignment.as_text())
+            print("  Answer it with:  python main.py --homework do\n")
+            return 0
+
+        marked = await tutor.mark_homework(current)
+        print(marked.as_text(show_answers=True))
+        return 0
+    finally:
+        await client.aclose()
+
+
 def main() -> int:
     args = parse_args()
 
@@ -151,6 +236,9 @@ def main() -> int:
         cfg.tutor.chapter = args.chapter
         if args.chapter == 0:
             cfg.tutor.resume = False
+
+    if args.homework:
+        return asyncio.run(run_homework(cfg, args.homework))
 
     if args.doctor:
         checks = doctor.run_all(cfg)

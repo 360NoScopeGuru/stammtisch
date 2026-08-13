@@ -150,6 +150,76 @@ shaky first attempt otherwise gets read as English and scored as nonsense.
 Three goes at one phrase, then it moves on. Drilling past that stops being
 practice and becomes a wall.
 
+## Homework
+
+Talking is not studying. A tutor that only holds conversations leaves nothing
+to do between sessions and never makes you produce German under your own steam,
+which is where the gaps actually show.
+
+```powershell
+python main.py --homework new      # set work on the chapter you are on
+python main.py --homework do       # answer it — no mic, no models needed
+python main.py --homework          # see it again, with marks
+```
+
+```
+  1. Fill the gap: Ich ___ Anna.
+     → heiße
+     ✓
+  2. You meet someone for the first time. A) Auf Wiedersehen! B) Hallo! C) Guten Tag!
+     → C) Guten Tag!
+     ✓
+  4. Complete the sentence: Er ist ____.
+     ✗ left blank
+
+  4 of 5 marked correct
+```
+
+### Closed and open, and why the split matters
+
+**Closed** exercises have one right answer, known when the exercise is written,
+so marking is a string comparison — **no model involved**. Gap-fills, choosing
+an article, conjugating a verb, writing a number as a word.
+
+**Open** exercises — translate this, write a short dialogue — have no possible
+answer key, so a model has to judge them.
+
+Everything that *can* be closed is, because model marking is the weak link: it
+is inconsistent between runs and it invents faults to look useful. Only the
+open exercises are ever sent to the LLM, and a model verdict can never overturn
+a mechanical one.
+
+The workbook that ships with the textbook has no answer key either — the
+`Lösungen` in it are the word "solutions" inside exercise instructions, not a
+marking section — so there is no shortcut available here.
+
+**Marks are advisory.** This is practice, not an exam.
+
+### The failure this is built around
+
+An unfair mark is worse than no mark, because you cannot tell it from a real
+one, and one of them teaches you to distrust every other. The first version
+marked both of these wrong:
+
+```
+key "C"         you wrote "C) Guten Tag!"     ← a person answering a question
+key "heiße"     you wrote "Ich heiße Anna"    ← filling the gap in context
+```
+
+Both now count as correct. Case, spacing, punctuation and umlaut spelling are
+folded away; the expected answer is accepted anywhere inside your answer as
+whole words, so «ist» is not found inside «Christian».
+
+Model output is treated as untrusted throughout. Asked to mark exercise 4 the
+model will happily return index 0 or 5, and an answer silently left unmarked
+looks exactly like one the marker ignored — so when the indices do not line up
+but the count does, they are matched positionally instead.
+
+Homework is set on the chapter you are actually on, and includes an exercise
+targeting whatever you keep getting wrong.
+
+> Your answers live in `homework/`, which is gitignored.
+
 ## Requirements
 
 - NVIDIA GPU with ~6 GB free VRAM
@@ -248,6 +318,7 @@ Four scripts, none of which need a microphone:
 | `test_langid.py` | language classification + every real routing regression | nothing |
 | `test_intents.py` | mode-switch detection, including false positives | nothing |
 | `test_drills.py` | repeat-after-me scoring, and every false negative | nothing |
+| `test_homework.py` | fair marking, and untrusted model marks | nothing |
 | `test_progress.py` | cross-session memory, recurring-mistake detection | nothing |
 | `test_curriculum.py` | textbook parsing and chapter/grammar alignment | nothing |
 | `test_corrections.py` | name protection, and the corrections that must survive it | nothing |
@@ -277,6 +348,7 @@ python main.py --mode practice --level A2       # skip straight to German
 python main.py --chapter 3                      # chapter 3 of your textbook
 python main.py --list-chapters
 python main.py --progress                       # what you have covered so far
+python main.py --homework new                   # set written work
 python main.py --scenario baeckerei
 python main.py --list-scenarios
 python main.py --doctor                         # why isn't it working?
