@@ -39,8 +39,27 @@ MENTOR_PATTERNS = [
     r"\bich verstehe (?:das )?nicht\b",
 ]
 
+# "Let me try saying that." Narrower than the mode patterns, because a false
+# positive here interrupts the lesson to drill a phrase nobody asked about.
+DRILL_PATTERNS = [
+    r"\b(?:let me|can i|i want to|i'?d like to)\s+(?:just\s+)?"
+    r"(?:try|say|repeat|practi[sc]e)\s+(?:that|it|this|again)\b",
+    r"\b(?:say|repeat)\s+(?:that|it)\s+again\b",
+    r"\b(?:one|once)\s+more\s+time\b",
+    r"\bhow do i say (?:that|it)\b",
+    r"\blet me repeat\b",
+    r"\bdrill (?:that|it|me)\b",
+    r"\bnoch (?:ein)?mal\b",
+]
+
 _PRACTICE_RE = [re.compile(p, re.IGNORECASE) for p in PRACTICE_PATTERNS]
 _MENTOR_RE = [re.compile(p, re.IGNORECASE) for p in MENTOR_PATTERNS]
+_DRILL_RE = [re.compile(p, re.IGNORECASE) for p in DRILL_PATTERNS]
+
+
+def wants_drill(text: str) -> bool:
+    """Did the learner ask to say the last phrase back?"""
+    return any(r.search(text) for r in _DRILL_RE)
 
 
 def requested_mode(text: str, current_mode: str) -> str | None:

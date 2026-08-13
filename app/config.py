@@ -97,6 +97,9 @@ class TutorCfg:
     # is 0 to ignore the course entirely and use `scenario` above.
     course: str = ""
     chapter: int = 0
+    # Pick up at the chapter the last session ended on. An explicit --chapter
+    # or a chapter set in this file still wins.
+    resume: bool = True
 
 
 @dataclass

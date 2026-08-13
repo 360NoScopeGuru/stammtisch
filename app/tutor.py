@@ -15,7 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from . import curriculum, prompts, scenarios, segments
+from . import curriculum, drills, progress, prompts, scenarios, segments
 from .audio_io import MicListener, Speaker
 from .config import Config
 from .corrections import filter_corrections
@@ -50,9 +50,29 @@ class Tutor:
         # session's topic in place of the stock scenarios, so the app teaches
         # the same chapters in the same order as the learner's actual class.
         self.course = curriculum.find(cfg.courses_path, cfg.tutor.course)
+        # Everything the learner has done before, rebuilt from the saved
+        # sessions. Without it the tutor re-teaches «Guten Morgen» every launch
+        # and never notices a mistake becoming a habit.
+        self.progress = progress.build(cfg.sessions_path)
+        if not self.progress.is_empty:
+            log.info("resuming: %d past session(s), %d words met, "
+                     "%d recurring mistake(s)",
+                     self.progress.sessions, len(self.progress.vocab),
+                     len(self.progress.recurring(limit=99)))
+        if cfg.tutor.resume and not cfg.tutor.chapter and self.course:
+            # Carry on where the last session stopped; on a first ever run
+            # that is simply the start of the book.
+            first = self.course.first()
+            cfg.tutor.chapter = (
+                self.progress.last_chapter
+                or (first.number if first else 0)
+            )
         self.chapter = self._resolve_chapter(cfg.tutor.chapter)
         self.scenario = self._scenario_for(self.chapter)
         self.history: list[dict[str, str]] = []
+        # The most recent German phrase spoken, so "let me try that" has
+        # something to drill.
+        self.last_german = ""
         self.session = SessionLog(cfg, level=cfg.tutor.level, scenario=self.scenario.key)
 
         self.stt = Transcriber(cfg)
@@ -106,6 +126,7 @@ class Tutor:
         system = prompts.system_prompt(
             self.mode, self.cfg.tutor.level, self.scenario.description,
             reference=self._course_reference(),
+            history=self.progress.brief(),
         )
         keep = self.cfg.tutor.history_turns * 2
         return [{"role": "system", "content": system}, *self.history[-keep:]]
@@ -124,12 +145,22 @@ class Tutor:
         # more likely an English aside.
         tie_break = segments.DE if self.mode == prompts.PRACTICE else segments.EN
 
+        spoken_de: list[str] = []
         for lang, chunk in segments.split_segments(text, tie_break):
             if self.mic.interrupted.is_set():
                 return
+            if lang == segments.DE:
+                spoken_de.append(chunk)
             pcm = await asyncio.to_thread(self.tts.synthesize, chunk, lang)
             if len(pcm):
                 self.speaker.play(pcm)
+
+        # Remember the German so the learner can ask to say it back. Only
+        # phrases worth drilling: a bare "Ja." is not a pronunciation exercise.
+        if spoken_de:
+            candidate = " ".join(spoken_de).strip()
+            if len(drills.words(candidate)) >= 2:
+                self.last_german = candidate
 
     async def say(self, text: str) -> None:
         """Speak a fixed line (openers, errors). Not streamed."""

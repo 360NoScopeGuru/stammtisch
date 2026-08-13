@@ -62,10 +62,19 @@ class FakeTutor:
         self.speaker = FakeSpeaker()
         # Return "" once exhausted — the loop skips empty transcripts, so an
         # unexpected extra utterance shows up as a failed assertion, not a crash.
+        # Records the language each call was made with, so a test can check
+        # that a drill attempt is pinned to German rather than auto-detected.
+        self.languages: list[str | None] = []
+
+        def transcribe(a, lang=None):
+            self.languages.append(lang)
+            return transcripts.pop(0) if transcripts else ""
+
         self.stt = types.SimpleNamespace(
-            transcribe=lambda a, lang=None: transcripts.pop(0) if transcripts else "",
+            transcribe=transcribe,
             last_language="de",   # so corrections are exercised
         )
+        self.last_german = ""
         self.reply_delay = 0.0  # stand-in for TTS playback time
         self.session = _FakeSession()
         self.spoken: list[str] = []
@@ -275,6 +284,67 @@ async def scenario_mode_handoff(cfg):
     }
 
 
+async def scenario_drill(cfg):
+    """"Let me try that" drills the last German phrase instead of replying.
+
+    The whole point is that the learner has to *say* something. If this falls
+    through to the model, it answers "of course, go ahead!" and nothing is
+    practised.
+    """
+    cfg.tutor.mode = "mentor"
+    bus = EventBus()
+    tutor = FakeTutor(cfg, bus, [
+        "Let me try that again",          # asks for a drill
+        "Ich hätte gern ein Brot",        # attempt: one word wrong
+        "Ich hätte gern ein Brötchen",    # attempt: right
+        "So what is next?",               # back to normal conversation
+    ])
+    tutor.last_german = "Ich hätte gern ein Brötchen"
+    runner = ConversationRunner(tutor, bus)
+    events: list[dict] = []
+    collector = asyncio.create_task(collect(bus, events))
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.sleep(0.05)
+
+    audio = np.zeros(1600, dtype=np.float32)
+    for _ in range(4):
+        tutor.mic.q.put_nowait(audio)
+        await asyncio.sleep(0.15)
+
+    runner.request_stop()
+    await asyncio.wait_for(task, timeout=3)
+    collector.cancel()
+
+    kinds = [e["type"] for e in events]
+    results = [e for e in events if e["type"] == "drill_result"]
+    langs = tutor.languages
+
+    return {
+        "drill starts on request": "drill_start" in kinds,
+        "the phrase is spoken back for the learner": any(
+            "Ich hätte gern ein Brötchen" in s for s in tutor.spoken
+        ),
+        "both attempts scored": len(results) == 2,
+        "a wrong word is not a pass": results[0]["verdict"] != "good",
+        "the second attempt passes": results[-1]["verdict"] == "good",
+        "the missed word is identified": any(
+            w["status"] in ("wrong", "missing") and w["target"] == "Brötchen"
+            for w in results[0]["words"]
+        ),
+        "drill ends after success": "drill_end" in kinds,
+        "attempts were transcribed as German, not auto-detected": (
+            langs[1] == "de" and langs[2] == "de"
+        ),
+        "the request itself was not sent to the model": all(
+            "Let me try that again" not in s for s in tutor.spoken
+        ),
+        "conversation resumes afterwards": any(
+            "Antwort auf: So what is next?" in s for s in tutor.spoken
+        ),
+    }
+
+
 def scenario_echo_guard(cfg):
     """Similarity guard: reject own speech, keep genuine user turns.
 
@@ -307,7 +377,7 @@ def scenario_echo_guard(cfg):
 async def main() -> int:
     failures = 0
     for fn in (scenario_basic, scenario_control, scenario_no_barge_in,
-               scenario_mode_handoff, scenario_echo_guard):
+               scenario_mode_handoff, scenario_drill, scenario_echo_guard):
         cfg = load_config()  # fresh config per scenario
         print(f"\n{fn.__name__}:")
         try:
