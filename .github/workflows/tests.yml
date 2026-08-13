@@ -33,7 +33,7 @@ jobs:
           set -e
           for t in test_sentences test_segments test_langid test_intents \
                    test_corrections test_curriculum test_progress test_drills \
-                   test_persistence; do
+                   test_homework test_persistence; do
             echo "::group::$t"
             python "scripts/$t.py"
             echo "::endgroup::"

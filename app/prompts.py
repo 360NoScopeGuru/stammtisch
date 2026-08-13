@@ -194,6 +194,84 @@ def system_prompt(mode: str, level: str, scenario_description: str,
     return prompt
 
 
+HOMEWORK_SYSTEM = """\
+You are setting a short written homework for a German learner at level \
+{level}. It should take about ten minutes.
+
+Topic: {scenario}
+
+Write {count} exercises. Prefer exercises with ONE correct answer, because \
+those can be marked exactly; only use open-ended ones where a single answer \
+genuinely does not exist.
+
+- kind "closed": exactly one right answer, which you MUST give in "answer". \
+Gap-fills, choosing the article, conjugating a verb, writing a number as a \
+word. Put any equally correct variant in "alternatives".
+- kind "open": translation or a short piece of writing. No "answer" field.
+
+Rules:
+- Write the instructions in English; the German goes in the exercise itself.
+- Use a gap marker like ___ where the learner fills something in.
+- Only test material from the topic above and levels at or below {level}.
+- A "closed" exercise must have one answer that is right for EVERYBODY. Never \
+make it closed when the answer depends on the learner — where they live, their \
+name, what they like, how they feel. Those are "open".
+- Never write an exercise whose answer is the learner's own name.
+{weakness}
+Reply with JSON only, in exactly this shape:
+{{"exercises": [{{"kind": "closed", "prompt": "Fill the gap: Ich ___ Anna.", \
+"answer": "heiße", "alternatives": ["heisse"], "hint": ""}}]}}"""
+
+
+MARKER_SYSTEM = """\
+You are marking a German learner's homework at level {level}. Only the \
+open-ended exercises are yours to judge; the rest have already been marked \
+exactly.
+
+For each one decide whether the learner has done what was asked, and write one \
+short sentence of feedback in English. If the German is wrong, give the \
+corrected version in that sentence.
+
+Be fair rather than strict. This is practice, not an exam:
+- Ignore capitalisation, punctuation and umlaut spelling («heisse» = «heiße»).
+- A different but correct way of saying it is correct.
+- Do not correct names or place names; speech and typing mangle them and the \
+learner did not get them wrong.
+- An empty answer is not correct.
+
+Reply with JSON only, in exactly this shape:
+{{"marks": [{{"index": 0, "correct": true, "note": "short feedback"}}], \
+"comment": "one sentence about the whole piece"}}"""
+
+
+def homework_messages(level: str, scenario_description: str, count: int = 5,
+                      weaknesses: list[str] | None = None) -> list[dict[str, str]]:
+    # Homework is the natural place to revisit a mistake that keeps coming
+    # back, because there is time to think about it.
+    weakness = ""
+    if weaknesses:
+        weakness = ("- The learner repeatedly gets these wrong, so include at "
+                    "least one exercise targeting one of them: "
+                    + "; ".join(weaknesses[:4]) + ".\n")
+    return [
+        {"role": "system", "content": HOMEWORK_SYSTEM.format(
+            level=level.upper(), scenario=scenario_description,
+            count=count, weakness=weakness)},
+        {"role": "user", "content": "Set the homework."},
+    ]
+
+
+def marking_messages(level: str, items: list[dict]) -> list[dict[str, str]]:
+    body = "\n\n".join(
+        f"[{it['index']}] {it['prompt']}\nLearner wrote: {it['given'] or '(blank)'}"
+        for it in items
+    )
+    return [
+        {"role": "system", "content": MARKER_SYSTEM.format(level=level.upper())},
+        {"role": "user", "content": body},
+    ]
+
+
 def corrector_messages(
     level: str, utterance: str, learner_name: str = ""
 ) -> list[dict[str, str]]:

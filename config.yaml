@@ -7,6 +7,7 @@ paths:
   # Textbooks turned into a syllabus by scripts/ingest_textbook.py. Gitignored:
   # the content is copyrighted and this repository is public.
   courses_dir: ./courses
+  homework_dir: ./homework   # your answers, personal — gitignored
 
 audio:
   # Whisper wants 16 kHz mono. Piper emits at its own rate (see tts.sample_rate).

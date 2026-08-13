@@ -13,9 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 
-from . import curriculum, drills, progress, prompts, scenarios, segments
+from . import (curriculum, drills, homework, progress, prompts, scenarios,
+               segments)
 from .audio_io import MicListener, Speaker
 from .config import Config
 from .corrections import filter_corrections
@@ -59,14 +61,7 @@ class Tutor:
                      "%d recurring mistake(s)",
                      self.progress.sessions, len(self.progress.vocab),
                      len(self.progress.recurring(limit=99)))
-        if cfg.tutor.resume and not cfg.tutor.chapter and self.course:
-            # Carry on where the last session stopped; on a first ever run
-            # that is simply the start of the book.
-            first = self.course.first()
-            cfg.tutor.chapter = (
-                self.progress.last_chapter
-                or (first.number if first else 0)
-            )
+        cfg.tutor.chapter = self.resume_chapter()
         self.chapter = self._resolve_chapter(cfg.tutor.chapter)
         self.scenario = self._scenario_for(self.chapter)
         self.history: list[dict[str, str]] = []
@@ -88,6 +83,20 @@ class Tutor:
         return self.cfg.tutor.mode
 
     # ---- the course ---------------------------------------------------
+
+    def resume_chapter(self) -> int:
+        """Which chapter this session should open on.
+
+        Shared with the homework commands, which build a cut-down Tutor and
+        would otherwise silently fall back to the stock scenarios — setting
+        homework on "Absolute basics" while the lessons were on chapter 3.
+        """
+        if not (self.cfg.tutor.resume and self.course) or self.cfg.tutor.chapter:
+            return self.cfg.tutor.chapter
+        # Carry on where the last session stopped; on a first ever run that is
+        # simply the start of the book.
+        first = self.course.first()
+        return self.progress.last_chapter or (first.number if first else 0)
 
     def _resolve_chapter(self, number: int) -> curriculum.Chapter | None:
         """Chapter `number`, or None to fall back to the stock scenarios."""
@@ -280,6 +289,73 @@ class Tutor:
                 items=corrections,
                 vocab=vocab,
             )
+
+    # ---- homework ------------------------------------------------------
+
+    async def set_homework(self, count: int = 5) -> homework.Assignment | None:
+        """Ask the model for an assignment on the current topic."""
+        weaknesses = [m.label for m in self.progress.recurring(limit=3)]
+        raw = await self.llm.complete_json(
+            prompts.homework_messages(
+                self.cfg.tutor.level, self.scenario.description,
+                count=count, weaknesses=weaknesses,
+            )
+        )
+        if not raw:
+            log.warning("homework generation returned nothing")
+            return None
+
+        assignment = homework.parse_generated(
+            raw,
+            chapter=self.chapter.number if self.chapter else None,
+            chapter_title=self.scenario.title,
+            level=self.cfg.tutor.level,
+        )
+        if not assignment.exercises:
+            log.warning("homework generation produced no usable exercises")
+            return None
+
+        homework.save(assignment, self.cfg.homework_path)
+        log.info("homework set: %d exercises (%d closed)",
+                 len(assignment.exercises),
+                 sum(1 for e in assignment.exercises if e.kind == homework.CLOSED))
+        self.bus.publish("homework_set", id=assignment.id,
+                         count=len(assignment.exercises),
+                         title=assignment.chapter_title)
+        return assignment
+
+    async def mark_homework(self, assignment: homework.Assignment
+                            ) -> homework.Assignment:
+        """Mark what the rules can, then send only the rest to the model."""
+        open_indices = assignment.mark_closed()
+
+        if open_indices:
+            items = [
+                {"index": i,
+                 "prompt": assignment.exercises[i].prompt,
+                 "given": assignment.answer_for(i).given}
+                for i in open_indices
+            ]
+            raw = await self.llm.complete_json(
+                prompts.marking_messages(assignment.level, items)
+            )
+            if raw:
+                assignment.apply_model_marks(raw.get("marks") or [],
+                                             expected=open_indices)
+                assignment.comment = str(raw.get("comment", ""))[:300]
+            else:
+                log.warning("marking returned nothing; open answers left unmarked")
+                assignment.marked = datetime.now().isoformat(timespec="seconds")
+        else:
+            assignment.marked = datetime.now().isoformat(timespec="seconds")
+
+        homework.save(assignment, self.cfg.homework_path)
+        right, total = assignment.score
+        log.info("homework marked: %d/%d", right, total)
+        self.bus.publish("homework_marked", id=assignment.id,
+                         right=right, total=total,
+                         comment=assignment.comment)
+        return assignment
 
     # ---- runtime controls ---------------------------------------------
 
