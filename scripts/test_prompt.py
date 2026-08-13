@@ -171,8 +171,13 @@ async def main() -> int:
         # The point of a course is that the tutor teaches *this* chapter. A
         # generic greeting lesson would pass any looser check while quietly
         # ignoring the book, so this asks for the chapter's own vocabulary.
+        # Anything that is distinctively this chapter: its topic keywords, its
+        # section titles (a reply opening with «Was darf es sein?» is squarely
+        # on chapter 3 even though that phrase is in none of the keywords),
+        # and the vocabulary of its reference section.
         wanted = [t.lower() for t in chapter.topics]
-        wanted += [w.lower() for w in chapter.reference_extract().split()
+        wanted += [u.title.lower().rstrip("?!. ") for u in chapter.units]
+        wanted += [w.lower().strip(".,;:!?") for w in chapter.reference.split()
                    if len(w) > 4]
         check("teaches this chapter rather than opening with greetings",
               any(w in reply4.lower() for w in wanted),
