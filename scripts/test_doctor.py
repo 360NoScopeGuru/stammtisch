@@ -102,7 +102,7 @@ def main() -> int:
     check("probing a package whose parent does not exist does not raise",
           doctor._has_module("nvidia.cublas") in (True, False))
     check("a wholly absent namespace is just False",
-          doctor._has_module("definitely_not_installed.sub"), False)
+          doctor._has_module("definitely_not_installed.sub") is False)
     cfg.stt.device = "cuda"
     c = doctor.check_cuda_dlls(cfg)
     check("the cuda check returns a verdict either way",
