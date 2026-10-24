@@ -48,6 +48,7 @@ class Mistake:
     count: int
     example: str = ""
     explanation: str = ""
+    corrected: str = ""          # the example, put right
 
     @property
     def label(self) -> str:
@@ -60,6 +61,7 @@ class Word:
     seen: int = 0
     first: str = ""
     last: str = ""
+    meaning: str = ""            # English, where the corrector gave one
 
 
 @dataclass
@@ -73,10 +75,11 @@ class Progress:
     last_level: str = ""
     vocab: dict[str, Word] = field(default_factory=dict)
     mistakes: list[Mistake] = field(default_factory=list)
+    homework_marked: int = 0
 
     @property
     def is_empty(self) -> bool:
-        return self.sessions == 0
+        return self.sessions == 0 and not self.mistakes
 
     def recurring(self, limit: int = BRIEF_MISTAKES) -> list[Mistake]:
         return [m for m in self.mistakes
@@ -96,8 +99,10 @@ class Progress:
         if self.is_empty:
             return ""
 
-        lines = [f"You have taught this learner before: {self.sessions} "
-                 f"previous session(s), {self.turns} turns in total."]
+        lines = []
+        if self.sessions:
+            lines.append(f"You have taught this learner before: {self.sessions} "
+                         f"previous session(s), {self.turns} turns in total.")
         if self.last_chapter:
             lines.append(f"Last time you were on chapter {self.last_chapter}.")
 
@@ -133,7 +138,9 @@ class Progress:
             "  Fortschritt",
             "─" * 58,
             f"  {self.sessions} sessions · {self.turns} turns · "
-            f"{self.minutes:.0f} min total",
+            f"{self.minutes:.0f} min total"
+            + (f" · {self.homework_marked} homework marked"
+               if self.homework_marked else ""),
         ]
         if self.last_seen:
             out.append(f"  Last session: {self.last_seen}"
@@ -198,14 +205,63 @@ def _load_sessions(sessions_dir: Path) -> list[dict]:
     return out
 
 
-def build(sessions_dir: Path) -> Progress:
+def _homework_corrections(homework_dir: Path | None) -> tuple[int, list[dict]]:
+    """Wrong answers from marked homework, as corrections.
+
+    A fault made in writing is the same fault as one made out loud, and
+    homework is where the learner had time to think — so a mistake that
+    survives that is worth more attention, not less. Only rule-marked closed
+    exercises count: they have a known right answer. A model's verdict on an
+    open exercise has no reliable "corrected" form to learn from.
+    """
+    if homework_dir is None:
+        return 0, []
+    from . import homework
+
+    marked, out = 0, []
+    for a in homework.load_all(homework_dir):
+        if not a.is_marked:
+            continue
+        marked += 1
+        for ans in a.answers:
+            if ans.correct is not False or ans.marked_by != "rules":
+                continue
+            if not ans.given.strip() or ans.index >= len(a.exercises):
+                continue
+            ex = a.exercises[ans.index]
+            if "___" in ex.prompt:
+                # Rebuild the sentence both ways, so the mistake reads as
+                # German in context rather than as two loose words.
+                stem = ex.prompt.split(":", 1)[-1].strip()
+                original = stem.replace("___", ans.given.strip(), 1)
+                corrected = stem.replace("___", ex.answer, 1)
+            else:
+                original, corrected = ans.given.strip(), ex.answer
+            out.append({"original": original, "corrected": corrected,
+                        "explanation": f"homework: {ex.prompt}"[:200]})
+    return marked, out
+
+
+def build(sessions_dir: Path, homework_dir: Path | None = None) -> Progress:
     p = Progress()
     sessions = _load_sessions(sessions_dir)
-    if not sessions:
+    marked, homework_fixes = _homework_corrections(homework_dir)
+    p.homework_marked = marked
+    if not sessions and not homework_fixes:
         return p
 
     pairs: Counter = Counter()
-    examples: dict[tuple[str, str], tuple[str, str]] = {}
+    examples: dict[tuple[str, str], tuple[str, str, str]] = {}
+
+    def count(c: dict) -> None:
+        sig = _signature(str(c.get("original", "")), str(c.get("corrected", "")))
+        if not sig:
+            return
+        pairs[sig] += 1
+        examples.setdefault(
+            sig, (str(c.get("original", "")), str(c.get("explanation", "")),
+                  str(c.get("corrected", "")))
+        )
 
     for data in sessions:
         transcript = data.get("transcript") or []
@@ -235,6 +291,7 @@ def build(sessions_dir: Path) -> Progress:
                 except ValueError:
                     pass
 
+        glossary = data.get("glossary") or {}
         for word in data.get("vocab") or []:
             key = str(word).strip().lower()
             if not key:
@@ -242,21 +299,20 @@ def build(sessions_dir: Path) -> Progress:
             entry = p.vocab.get(key) or Word(text=str(word).strip(), first=when)
             entry.seen += 1
             entry.last = max(entry.last, when)
+            entry.meaning = str(glossary.get(word, "")) or entry.meaning
             p.vocab[key] = entry
 
         for c in data.get("corrections") or []:
-            sig = _signature(str(c.get("original", "")), str(c.get("corrected", "")))
-            if not sig:
-                continue
-            pairs[sig] += 1
-            examples.setdefault(
-                sig, (str(c.get("original", "")), str(c.get("explanation", "")))
-            )
+            count(c)
+
+    for c in homework_fixes:
+        count(c)
 
     p.mistakes = [
-        Mistake(wrong=wrong, right=right, count=count,
-                example=examples.get((wrong, right), ("", ""))[0],
-                explanation=examples.get((wrong, right), ("", ""))[1])
-        for (wrong, right), count in pairs.most_common()
+        Mistake(wrong=wrong, right=right, count=n,
+                example=examples[(wrong, right)][0],
+                explanation=examples[(wrong, right)][1],
+                corrected=examples[(wrong, right)][2])
+        for (wrong, right), n in pairs.most_common()
     ]
     return p

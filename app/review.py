@@ -22,6 +22,7 @@ class Feedback:
     utterance: str
     corrections: list[dict]
     vocab: list[str]
+    glossary: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -52,8 +53,9 @@ class SessionLog:
         self._autosave()
 
     def add_feedback(self, utterance: str, corrections: list[dict],
-                     vocab: list[str]) -> None:
-        self.feedback.append(Feedback(utterance, corrections, vocab))
+                     vocab: list[str], glossary: dict[str, str] | None = None) -> None:
+        self.feedback.append(Feedback(utterance, corrections, vocab,
+                                      dict(glossary or {})))
         self._autosave()
 
     def _autosave(self) -> None:
@@ -89,6 +91,15 @@ class SessionLog:
                 if key and key not in seen:
                     seen.add(key)
                     out.append(word.strip())
+        return out
+
+    @property
+    def glossary(self) -> dict[str, str]:
+        """German -> English for the words met, where the corrector gave one.
+        Flashcards need the meaning; a bare German word cannot be reviewed."""
+        out: dict[str, str] = {}
+        for f in self.feedback:
+            out.update(f.glossary)
         return out
 
     def summary(self) -> str:
@@ -162,6 +173,7 @@ class SessionLog:
             "transcript": self.transcript,
             "corrections": self.all_corrections,
             "vocab": self.all_vocab,
+            "glossary": self.glossary,
         }
 
         json_path = out_dir / f"{self._stem}.json"
@@ -183,8 +195,9 @@ class SessionLog:
                 if expl := c.get("explanation"):
                     back = f"{back}<br><i>{expl}</i>"
                 w.writerow([front, back])
+            meanings = self.glossary
             for word in self.all_vocab:
-                w.writerow([word, ""])
+                w.writerow([word, meanings.get(word, "")])
 
         self._write_atomic(csv_path, write_csv)
 

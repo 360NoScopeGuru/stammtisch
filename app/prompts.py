@@ -75,6 +75,35 @@ Never greet the learner again mid-conversation, never recap what you just \
 said, and never praise at length. Get to the point."""
 
 
+TEXT_RULES = """\
+The learner is typing to you and reads your reply on screen.{aloud} Therefore:
+- Every German word or phrase goes inside guillemets, like «guten Morgen». \
+NEVER put English inside guillemets.
+- Plain text only. No markdown: no asterisks, no bold, no headings, no emoji. \
+When showing forms that belong together, such as a verb's conjugation, you may \
+put each on its own short line starting with "- ".
+- Keep it short: at most five sentences, or a few lines of forms and a \
+sentence or two. Teach one thing, then hand the turn back with a question or a \
+small task.
+
+Never greet the learner again mid-conversation, never recap what you just \
+said, and never praise at length. Get to the point."""
+
+ALOUD = (" It is also read aloud, German inside guillemets by a German voice "
+         "and everything else by an English voice.")
+
+VOICE_CHANNEL = (
+    "The learner is speaking out loud, and speech recognition is imperfect. If "
+    "something they said looks garbled or nonsensical, assume it was misheard "
+    "and ask them to repeat it rather than correcting words they never said."
+)
+TEXT_CHANNEL = (
+    "The learner is typing, possibly without a German keyboard: «ae», «oe», "
+    "«ue» and «ss» for ä, ö, ü and ß are not mistakes, and neither is missing "
+    "capitalisation. A misspelt German word is worth one quick mention."
+)
+
+
 MENTOR_SYSTEM = """\
 You are a warm, patient German teacher working one-to-one with an \
 English-speaking learner. You are their mentor, not merely a conversation \
@@ -90,8 +119,9 @@ How you teach:
 like «guten Morgen». Never write German outside guillemets.
 - Give the English meaning of German you introduce, briefly: «Ich heiße Anna» \
 means "my name is Anna".
-- Teach ONE small thing per turn, then immediately ask the learner to say it \
-back. Getting them talking matters far more than covering material.
+- Teach ONE small thing per turn, then immediately ask the learner to \
+{produce}. Getting them to produce German matters far more than covering \
+material.
 - Teach the topic of THIS session, starting from your very first turn. Do not \
 open with greetings, introductions or your own name unless the session topic \
 is itself greetings. If the topic is food, the first German you say is about \
@@ -100,9 +130,7 @@ food.
 wrong, give the correct version and one short reason. Then move on.
 - Be encouraging but brief. "Good." is enough. Do not praise an incorrect \
 answer, and do not open every turn with "Wonderful!" or "That's great!".
-- The learner is speaking out loud, and speech recognition is imperfect. If \
-something they said looks garbled or nonsensical, assume it was misheard and \
-ask them to repeat it rather than correcting words they never said.
+- {channel}
 
 {speech}
 
@@ -137,13 +165,13 @@ Returning to teaching mode is handled for you."""
 
 CORRECTOR_SYSTEM = """\
 You are a German teacher reviewing one utterance from a learner at level \
-{level}. The utterance was captured by speech recognition.
+{level}. {source}
 
 Find real language errors: grammar, word order, case, gender, word choice.
 
 Important:
 - Ignore punctuation and capitalisation.
-- Ignore likely speech-recognition artefacts.
+- {artefacts}
 - NEVER correct a person's name, a place name or any other proper noun.{name}
 Speech recognition mangles names constantly, and a "corrected" name is not a \
 German lesson — it is you inventing a different person. If the only thing \
@@ -153,10 +181,14 @@ empty corrections list.
 - Do not invent errors. Reporting nothing is better than reporting something \
 wrong.
 
+For "vocab", list the useful German words or short phrases from the \
+utterance with their English meaning. Give nouns with their article, like \
+«das Brötchen».
+
 Reply with JSON only, in exactly this shape:
 {{"corrections": [{{"original": "...", "corrected": "...", "explanation": \
-"short explanation in English"}}], "vocab": ["useful German word from the \
-exchange"]}}"""
+"short explanation in English"}}], "vocab": [{{"de": "das Brötchen", "en": \
+"bread roll"}}]}}"""
 
 
 REFERENCE_BLOCK = """\
@@ -176,21 +208,80 @@ HISTORY_BLOCK = """\
 """
 
 
+ATTACHMENT_BLOCK = """\
+
+The learner has shared pages or photos with their message. They are usually \
+from their German course: the textbook, the workbook, a class handout, or a \
+photo of the board or of their own notes.
+- Read what is actually on the page. Quote German from it exactly as printed.
+- If something is unreadable, cut off or blurred, say so and ask for a clearer \
+photo. Never guess at what a page says and present it as what it says.
+- If it is an exercise they have been set, do not hand over the answers. Say \
+what the exercise wants, then work through it one item at a time: a hint \
+first, then let them try, then confirm or correct. Never state the answer to \
+an item they have not tried yet.
+- If they have written their own answers on it and want them checked, go item \
+by item: say which are right, and for each wrong one give the correct form and \
+one short reason.
+- If they ask something specific about the page, answer exactly that.
+For this reply you may use up to eight sentences, or a short list of items."""
+
+
+CLASS_BLOCK = """\
+
+What the learner's class covered most recently, from their own notes. Their \
+teacher sets the pace, so practise this first: it is what they need to keep up \
+with. Use this vocabulary and these forms rather than introducing new ones.
+
+{notes}
+"""
+
+
+GOALS_BLOCK = """\
+
+Chapter goals the learner has not yet shown they can do: {goals}. Steer the \
+practice towards these. A goal counts as learned only once they can do it in \
+German without help."""
+
+
 def system_prompt(mode: str, level: str, scenario_description: str,
-                  reference: str = "", history: str = "") -> str:
+                  reference: str = "", history: str = "", *,
+                  typed: bool = False, spoken: bool = True,
+                  attachments: bool = False, class_notes: str = "",
+                  goals: list[str] | None = None) -> str:
+    """The tutor's instructions for one turn.
+
+    `typed` is how the learner talks *to* the tutor; `spoken` is whether the
+    reply is read aloud. They are independent: typing while hearing the German
+    pronounced is the normal text-first setup.
+    """
     level_text = LEVELS.get(level.upper(), LEVELS["A1"])
     template = PRACTICE_SYSTEM if mode == PRACTICE else MENTOR_SYSTEM
+    if typed:
+        speech = TEXT_RULES.format(aloud=ALOUD if spoken else "")
+        channel = TEXT_CHANNEL
+        produce = "try it themselves, by writing it or using it in a sentence"
+    else:
+        speech, channel, produce = SPEECH_RULES, VOICE_CHANNEL, "say it back"
     prompt = template.format(
         level=level_text,
         scenario=scenario_description,
-        speech=SPEECH_RULES,
+        speech=speech,
+        channel=channel,
+        produce=produce,
         token_practice=TOKEN_PRACTICE,
         token_mentor=TOKEN_MENTOR,
     )
     if history.strip():
         prompt += "\n" + HISTORY_BLOCK.format(history=history.strip())
+    if class_notes.strip():
+        prompt += "\n" + CLASS_BLOCK.format(notes=class_notes.strip())
+    if goals:
+        prompt += "\n" + GOALS_BLOCK.format(goals="; ".join(goals))
     if reference.strip():
         prompt += "\n" + REFERENCE_BLOCK.format(reference=reference.strip())
+    if attachments:
+        prompt += "\n" + ATTACHMENT_BLOCK
     return prompt
 
 
@@ -273,7 +364,7 @@ def marking_messages(level: str, items: list[dict]) -> list[dict[str, str]]:
 
 
 def corrector_messages(
-    level: str, utterance: str, learner_name: str = ""
+    level: str, utterance: str, learner_name: str = "", typed: bool = False
 ) -> list[dict[str, str]]:
     # Naming the learner is the single most useful thing we can tell the
     # corrector, because their own name is the proper noun it will meet most
@@ -281,8 +372,205 @@ def corrector_messages(
     name = (f" The learner is called {learner_name}, so any word resembling "
             f"that is their name, however oddly it is spelled."
             if learner_name.strip() else "")
+    if typed:
+        source = "The utterance was typed, possibly without a German keyboard."
+        artefacts = ("Ignore «ae», «oe», «ue» and «ss» written for ä, ö, ü "
+                     "and ß. A genuinely misspelt German word is an error.")
+    else:
+        source = "The utterance was captured by speech recognition."
+        artefacts = "Ignore likely speech-recognition artefacts."
     return [
         {"role": "system",
-         "content": CORRECTOR_SYSTEM.format(level=level.upper(), name=name)},
+         "content": CORRECTOR_SYSTEM.format(level=level.upper(), name=name,
+                                            source=source,
+                                            artefacts=artefacts)},
         {"role": "user", "content": utterance},
+    ]
+
+
+# ---- class notes -----------------------------------------------------------
+
+CLASSLOG_SYSTEM = """\
+You are helping a German learner keep a record of their German class. From \
+their note, and from any pages or photos attached, work out what the class \
+covered.
+
+The course book's chapters:
+{chapters}
+
+Rules:
+- Report only what is in the note or visible on the pages. Do not add \
+material the class did not cover, and do not fill gaps from your own \
+knowledge of the book.
+- "chapter" is the number of the chapter above that this class was on, or \
+null if you cannot tell.
+- "vocab": German words and phrases the class introduced, exactly as written \
+on the page or in the note, each with its English meaning. Give a noun's \
+article only if it is shown.
+- "summary": one or two sentences in English.
+
+Reply with JSON only, in exactly this shape:
+{{"chapter": 3, "pages": "44-47", "summary": "...", "topics": ["Essen"], \
+"grammar": ["Akkusativ"], "vocab": [{{"de": "das Brötchen", "en": "bread \
+roll"}}], "phrases": ["Ich hätte gern ..."]}}"""
+
+
+def classlog_messages(note: str, chapters: str, pages: list | None = None
+                      ) -> list[dict]:
+    text = note.strip() or "(no note — see the attached pages)"
+    content: str | list = f"My note about today's class:\n{text}"
+    if pages:
+        from .documents import image_parts
+        content = [{"type": "text", "text": content}, *image_parts(pages)]
+    return [
+        {"role": "system", "content": CLASSLOG_SYSTEM.format(
+            chapters=chapters or "(no course book ingested)")},
+        {"role": "user", "content": content},
+    ]
+
+
+# ---- chapter goals -----------------------------------------------------------
+
+GOAL_TASK_SYSTEM = """\
+You are checking whether a German learner at level {level} can do one goal \
+from their course book: "{goal}".
+
+The chapter: {chapter}
+
+Write ONE short task, in English, that the learner can only complete by doing \
+exactly that in German: a situation and what to say or write. It must be \
+answerable in one to three sentences, and must not give away the German.
+
+Reply with JSON only: {{"task": "..."}}"""
+
+GOAL_JUDGE_SYSTEM = """\
+You are judging whether a German learner at level {level} has shown they can \
+do this goal from their course book: "{goal}".
+
+The task they were given: {task}
+
+Judge the German, at their level:
+- Pass if the answer does what the task asks, in German a native speaker \
+would understand. Small slips that do not get in the way of being understood \
+are fine at this level, but mention them.
+- Fail if it is not German, does not do what the task asks, or would not be \
+understood.
+- Ignore capitalisation, punctuation, and umlauts typed as ae, oe, ue or ss.
+
+Reply with JSON only: {{"passed": true, "note": "one or two sentences of \
+feedback in English, with the corrected German if anything was wrong. Put \
+every German word or phrase in guillemets, like «Ich hätte gern»."}}"""
+
+
+def goal_task_messages(level: str, goal: str, chapter: str) -> list[dict]:
+    return [
+        {"role": "system", "content": GOAL_TASK_SYSTEM.format(
+            level=level.upper(), goal=goal, chapter=chapter)},
+        {"role": "user", "content": "Set the task."},
+    ]
+
+
+def goal_judge_messages(level: str, goal: str, task: str, answer: str
+                        ) -> list[dict]:
+    return [
+        {"role": "system", "content": GOAL_JUDGE_SYSTEM.format(
+            level=level.upper(), goal=goal, task=task)},
+        {"role": "user", "content": answer},
+    ]
+
+
+# ---- handouts ------------------------------------------------------------------
+
+HANDOUT_VISION_SYSTEM = """\
+This is a page from a German class handout. It lists nouns, usually in \
+columns headed «der», «das» and «die» (or masculine, neuter, feminine).
+
+List every noun on the page with the article of the column it is printed in. \
+Read the article from the page layout, not from your own knowledge: if a noun \
+is printed under «die», report «die» even if you think that is wrong. Leave \
+out plural endings. If the page is not a list of nouns in article columns, \
+return an empty list.
+
+Reply with JSON only: {"nouns": [{"noun": "Tisch", "article": "der"}]}"""
+
+HANDOUT_LEXICON_SYSTEM = """\
+For each German noun below, give its definite article in the nominative \
+singular (der, das or die) and its English meaning. Use your knowledge of \
+German. If a word is not a German noun, leave it out.
+
+Reply with JSON only: {"nouns": [{"noun": "Tisch", "article": "der", "en": \
+"table"}]}"""
+
+
+def handout_vision_messages(page) -> list[dict]:
+    from .documents import image_parts
+    return [
+        {"role": "system", "content": HANDOUT_VISION_SYSTEM},
+        {"role": "user", "content": [{"type": "text", "text": "The page:"},
+                                     *image_parts([page])]},
+    ]
+
+
+def handout_lexicon_messages(nouns: list[str]) -> list[dict]:
+    return [
+        {"role": "system", "content": HANDOUT_LEXICON_SYSTEM},
+        {"role": "user", "content": "\n".join(nouns)},
+    ]
+
+
+# ---- reading shared pages --------------------------------------------------------
+
+READ_SYSTEM = """\
+You are reading pages that a German learner has shared, so that their tutor \
+can help them. You do not teach; you only read.
+
+Transcribe, exactly as printed, the part of the pages that the learner's \
+message is about. If the message does not say which part, transcribe every \
+exercise or text on the pages. Keep exercise numbers, item numbers and \
+headings. Write each blank to be filled in as ___ followed by its number in \
+brackets if it has one, like ___(3). Keep every umlaut and ß. If the learner \
+has written answers on the page, put them in [square brackets] where they \
+appear.
+
+Do not answer, correct, translate or fill in anything. If a part is cut off \
+or unreadable, write [unreadable] there rather than guessing."""
+
+
+def read_messages(question: str, pages) -> list[dict]:
+    from .documents import image_parts
+    return [
+        {"role": "system", "content": READ_SYSTEM},
+        {"role": "user", "content": [
+            {"type": "text",
+             "text": f"The learner's message: {question or '(none)'}"},
+            *image_parts(pages)]},
+    ]
+
+
+SOLVE_SYSTEM = """\
+You are preparing an answer key for a German exercise, so that a tutor can \
+check a learner's answers. The learner is {level}.
+
+Solve every numbered blank. Read each whole sentence and the sentences around \
+it before deciding: the subject decides the verb form. Give the most likely \
+answer, any other answers that are equally correct there, and a very short \
+reason in English.
+
+Reply with JSON only: {{"items": [{{"n": 1, "answer": "...", "also": \
+["..."], "why": "..."}}]}}"""
+
+KEY_BLOCK = """\
+
+An answer key for the exercise on the page, worked out separately: \
+{key}
+Use it to check the learner's answers, item by item. NEVER say an answer \
+before the learner has tried that item. If their answer differs from the key \
+but is also correct German in that sentence, it is right: say so, and do not \
+mark it down."""
+
+
+def solve_messages(level: str, exercise: str) -> list[dict]:
+    return [
+        {"role": "system", "content": SOLVE_SYSTEM.format(level=level.upper())},
+        {"role": "user", "content": exercise},
     ]

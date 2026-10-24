@@ -71,20 +71,28 @@ def check_python() -> Check:
                  "reliable there")
 
 
-def check_packages() -> list[Check]:
+def check_packages(cfg: Config | None = None) -> list[Check]:
+    """Required packages fail; the ones only voice needs fail only when
+    voice is switched on. Text is the default, and a text session must not be
+    told it is broken because Whisper is not installed."""
+    voice = bool(cfg and cfg.voice_input)
+    speak = bool(cfg is None or cfg.tutor.speak)
     wanted = {
-        "faster_whisper": "speech recognition",
-        "piper": "speech synthesis",
-        "onnxruntime": "VAD and Piper runtime",
-        "sounddevice": "microphone and speaker",
-        "httpx": "LLM client",
-        "fastapi": "web UI",
-        "yaml": "config",
+        "httpx": ("LLM client", True),
+        "fastapi": ("web UI", True),
+        "yaml": ("config", True),
+        "pypdfium2": ("reading PDFs and photos", True),
+        "PIL": ("reading PDFs and photos", True),
+        "faster_whisper": ("speech recognition, for voice input", voice),
+        "sounddevice": ("microphone and speaker", voice or speak),
+        "onnxruntime": ("VAD and Piper runtime", voice or speak),
+        "piper": ("reading replies aloud", speak),
     }
     out = []
-    for mod, why in wanted.items():
+    for mod, (why, needed) in wanted.items():
         if not _has_module(mod):
-            out.append(Check(f"package {mod}", FAIL, f"missing ({why})",
+            out.append(Check(f"package {mod}", FAIL if needed else WARN,
+                             f"missing ({why})",
                              "pip install -r requirements.txt"))
     if not _has_module("pypdf"):
         out.append(Check("package pypdf", WARN,
@@ -97,7 +105,7 @@ def check_packages() -> list[Check]:
                          "mismatched torchaudio breaks the VAD import — "
                          "pip uninstall torch torchaudio"))
     if not out:
-        out.append(Check("packages", OK, f"{len(wanted)} required imports present"))
+        out.append(Check("packages", OK, f"{len(wanted)} imports present"))
     return out
 
 
@@ -108,10 +116,14 @@ def check_models(cfg: Config) -> list[Check]:
         return [Check("model files", FAIL, f"{root} does not exist",
                       "python scripts/fetch_models.py")]
 
+    # Missing voice files stop the app only if it is set to use them; in a
+    # text session they are something to know, not something broken.
     vad = list(root.rglob("silero_vad*.onnx"))
     out.append(
         Check("Silero VAD", OK, vad[0].name) if vad
-        else Check("Silero VAD", FAIL, f"not found under {root}",
+        else Check("Silero VAD", FAIL if cfg.voice_input else WARN,
+                   f"not found under {root}"
+                   + ("" if cfg.voice_input else " — needed for voice input"),
                    "python scripts/fetch_models.py")
     )
 
@@ -119,7 +131,10 @@ def check_models(cfg: Config) -> list[Check]:
         found = list(root.rglob(f"{voice}.onnx"))
         out.append(
             Check(f"Piper voice ({lang})", OK, voice) if found
-            else Check(f"Piper voice ({lang})", FAIL, f"{voice}.onnx not found",
+            else Check(f"Piper voice ({lang})",
+                       FAIL if cfg.tutor.speak else WARN,
+                       f"{voice}.onnx not found"
+                       + ("" if cfg.tutor.speak else " — needed to read aloud"),
                        "python scripts/fetch_models.py")
         )
 
@@ -170,7 +185,30 @@ def check_llm(cfg: Config) -> list[Check]:
         else:
             out.append(Check(f"model ({label})", FAIL, f"{model} not pulled",
                              f"ollama pull {model}"))
+
+    if cfg.llm.model in names:
+        out.append(check_vision(host, port, cfg.llm.model))
     return out
+
+
+def check_vision(host: str, port: int, model: str) -> Check:
+    """Can the model see? Pages and photos are sent to it as images, and a
+    text-only model fails that silently: it answers the question as if the
+    page were blank, confidently."""
+    import json
+    raw = _run(["curl", "-s", "-m", "4", f"http://{host}:{port}/api/show",
+                "-d", json.dumps({"model": model})])
+    try:
+        caps = json.loads(raw).get("capabilities")
+    except (ValueError, AttributeError):
+        caps = None
+    if caps is None:
+        return Check("model (vision)", WARN, "cannot tell whether it reads images")
+    if "vision" in caps:
+        return Check("model (vision)", OK, "reads PDFs and photos")
+    return Check("model (vision)", WARN,
+                 f"{model} cannot read images — attached pages will be ignored",
+                 "use a vision model, e.g. ollama pull gemma3:12b")
 
 
 def check_power() -> list[Check]:
@@ -236,12 +274,16 @@ def check_battery() -> Check:
     return Check("Power", OK, "on mains")
 
 
-def check_audio() -> list[Check]:
+def check_audio(cfg: Config | None = None) -> list[Check]:
+    voice = bool(cfg and cfg.voice_input)
+    speak = bool(cfg is None or cfg.tutor.speak)
+    if not (voice or speak):
+        return [Check("Audio", OK, "not used — text in, text out")]
     try:
         import sounddevice as sd
         devices = sd.query_devices()
     except Exception as e:
-        return [Check("Audio devices", FAIL, str(e)[:70],
+        return [Check("Audio devices", FAIL if voice else WARN, str(e)[:70],
                       "check that a sound device exists and drivers are loaded")]
 
     ins = [d for d in devices if d.get("max_input_channels", 0) > 0]
@@ -254,7 +296,9 @@ def check_audio() -> list[Check]:
             default = ins[0]["name"]
         out.append(Check("Microphone", OK, f"{len(ins)} input(s), using {default}"))
     else:
-        out.append(Check("Microphone", FAIL, "no input device",
+        out.append(Check("Microphone", FAIL if voice else WARN,
+                         "no input device"
+                         + ("" if voice else " — needed only for voice input"),
                          "python main.py --list-devices"))
     out.append(
         Check("Speaker", OK, f"{len(outs)} output(s)") if outs
@@ -307,7 +351,7 @@ def check_course(cfg: Config) -> Check:
 
 def check_progress(cfg: Config) -> Check:
     from . import progress
-    p = progress.build(cfg.sessions_path)
+    p = progress.build(cfg.sessions_path, cfg.homework_path)
     if p.is_empty:
         return Check("History", OK, "no sessions yet — first run")
     return Check("History", OK,
@@ -317,18 +361,35 @@ def check_progress(cfg: Config) -> Check:
 
 # --- runner ---------------------------------------------------------------
 
+def check_study(cfg: Config) -> Check:
+    from . import classlog, handouts, srs
+    classes = len(classlog.load_all(cfg.study_path))
+    decks = handouts.load_decks(cfg.study_path)
+    pending = sum(d.counts()["pending"] for d in decks)
+    reviews = len(srs.read_log(cfg.study_path))
+    detail = (f"{classes} class note(s), {len(decks)} handout deck(s), "
+              f"{reviews} flashcard review(s)")
+    if pending:
+        return Check("Study", WARN, detail,
+                     f"{pending} handout word(s) wait for you to confirm their "
+                     f"article — Handouts tab")
+    return Check("Study", OK, detail)
+
+
 def run_all(cfg: Config) -> list[Check]:
     checks: list[Check] = [check_python()]
-    checks += check_packages()
-    checks.append(check_cuda_dlls(cfg))
+    checks += check_packages(cfg)
+    if cfg.voice_input:
+        checks.append(check_cuda_dlls(cfg))
     checks += check_models(cfg)
     checks += check_llm(cfg)
-    checks += check_audio()
+    checks += check_audio(cfg)
     checks.append(check_battery())
     checks += check_power()
     checks += check_disk(cfg)
     checks.append(check_course(cfg))
     checks.append(check_progress(cfg))
+    checks.append(check_study(cfg))
     return checks
 
 

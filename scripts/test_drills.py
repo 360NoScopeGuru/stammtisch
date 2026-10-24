@@ -15,6 +15,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Piped on Windows, stdout is cp1252, which has no →; the verdict lines would
+# crash the test instead of reporting it.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from app.drills import CLOSE, GOOD, compare, normalise  # noqa: E402
 

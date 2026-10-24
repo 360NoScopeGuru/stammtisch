@@ -2,7 +2,8 @@
 
 This covers the parts that are easy to get subtly wrong: the wait-on-either
 (audio | control) race, task cancellation, control handling mid-conversation,
-and echo-draining when barge-in is off. `python scripts/test_loop.py`
+echo-draining when barge-in is off, typed turns with attached pages, and the
+chapter-goal check. `python scripts/test_loop.py`
 """
 
 from __future__ import annotations
@@ -51,12 +52,22 @@ class FakeSpeaker:
 
 
 class FakeTutor:
-    def __init__(self, cfg, bus, transcripts):
+    def __init__(self, cfg, bus, transcripts, voice=True):
         self.cfg = cfg
         self.bus = bus
+        self.voice = voice
+        self.history = []
+        self.documents = {}
+        self.llm = None
+        self.course = types.SimpleNamespace(title="Testbuch")
+        self.chapter = types.SimpleNamespace(number=3)
+        self.goal_list = []
+        self.responded = []      # (text, pages, note) per respond() call
+        self.typed_flags = []    # `typed` per queued correction
         self.scenario = types.SimpleNamespace(
             key="baeckerei", title="Bakery",
             opener="Guten Morgen!", intro="Today we go to the bakery.",
+            description="At the bakery.",
         )
         self.mic = FakeMic()
         self.speaker = FakeSpeaker()
@@ -87,6 +98,27 @@ class FakeTutor:
     def mode(self):
         return self.cfg.tutor.mode
 
+    @property
+    def listening(self):
+        return self.voice
+
+    @property
+    def speaking_aloud(self):
+        return True
+
+    @property
+    def audio_queue(self):
+        return self.mic.q if self.voice else None
+
+    def goals(self):
+        return self.goal_list
+
+    def interrupt(self):
+        pass
+
+    def should_correct(self, text, typed):
+        return True
+
     def set_mode(self, v):
         if v == self.cfg.tutor.mode:
             return False
@@ -100,7 +132,8 @@ class FakeTutor:
     async def say(self, text):
         self.spoken.append(text)
 
-    async def respond(self, text):
+    async def respond(self, text, pages=None, note=""):
+        self.responded.append((text, pages or [], note))
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("simulated LLM failure")
@@ -110,8 +143,9 @@ class FakeTutor:
         self.spoken.append(reply)
         return Turn(role="assistant", text=reply, latency_ms=910.0)
 
-    def queue_correction(self, text):
+    def queue_correction(self, text, typed=False):
         self.corrected.append(text)
+        self.typed_flags.append(typed)
 
     def set_level(self, v):
         self.level_changes.append(v)
@@ -345,6 +379,200 @@ async def scenario_drill(cfg):
     }
 
 
+async def scenario_typed(cfg):
+    """Text-first: typed messages are turns, with no microphone at all."""
+    bus = EventBus()
+    tutor = FakeTutor(cfg, bus, [], voice=False)
+    runner = ConversationRunner(tutor, bus)
+    events: list[dict] = []
+    collector = asyncio.create_task(collect(bus, events))
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.sleep(0.05)
+    runner.submit({"action": "say", "value": "Ich heisse Anna."})
+    await asyncio.sleep(0.05)
+    runner.submit({"action": "say", "value": "   "})          # nothing to say
+    runner.submit({"action": "say", "value": "Can we practise now?"})
+    await asyncio.sleep(0.1)
+
+    runner.request_stop()
+    await asyncio.wait_for(task, timeout=3)
+    collector.cancel()
+
+    user = [e for e in events if e["type"] == "user_turn"]
+    statuses = [e["state"] for e in events if e["type"] == "status"]
+    return {
+        "typed message becomes a turn": tutor.responded[0][0] == "Ich heisse Anna.",
+        "blank message ignored": len(user) == 2,
+        "marked as typed": all(e.get("typed") for e in user),
+        "correction told the text was typed": tutor.typed_flags[:1] == [True],
+        "never claims to be listening": "listening" not in statuses,
+        "rests in the ready state": "ready" in statuses,
+        "mode switch works from typed text too": tutor.mode_changes == ["practice"],
+    }
+
+
+class FakeDoc:
+    name = "arbeitsblatt.pdf"
+    kind = "pdf"
+    page_count = 4
+
+    def select(self, spec):
+        from app.documents import Page, parse_pages
+        return [Page(number=n, text="", image=b"x") for n in parse_pages(spec, 4)]
+
+
+async def scenario_attachment(cfg):
+    """Pages attached to a typed message reach the model with a note naming
+    them; a bad page range is an error, not a turn."""
+    bus = EventBus()
+    tutor = FakeTutor(cfg, bus, [], voice=False)
+    tutor.documents["d1"] = FakeDoc()
+    runner = ConversationRunner(tutor, bus)
+    events: list[dict] = []
+    collector = asyncio.create_task(collect(bus, events))
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.sleep(0.05)
+    runner.submit({"action": "say", "value": "Can you check number 2?",
+                   "attachments": [{"id": "d1", "pages": "2-3"}]})
+    await asyncio.sleep(0.05)
+    runner.submit({"action": "say", "value": "and this?",
+                   "attachments": [{"id": "d1", "pages": "9"}]})
+    runner.submit({"action": "say", "value": "",
+                   "attachments": [{"id": "gone", "pages": ""}]})
+    await asyncio.sleep(0.1)
+
+    runner.request_stop()
+    await asyncio.wait_for(task, timeout=3)
+    collector.cancel()
+
+    text, pages, note = tutor.responded[0]
+    errors = [e["message"] for e in events if e["type"] == "error"]
+    shown = next(e for e in events if e["type"] == "user_turn")["attachments"]
+    return {
+        "pages handed to the model": [p.number for p in pages] == [2, 3],
+        "note names the file and pages": "arbeitsblatt.pdf" in note and "2-3" in note,
+        "the UI is told what was attached": bool(shown) and shown[0]["pages"] == [2, 3],
+        "out-of-range page is an error": any("outside" in m for m in errors),
+        "unknown file is an error": any("no longer loaded" in m for m in errors),
+        "neither error became a turn": len(tutor.responded) == 1,
+        "the attachment note is in the transcript": any(
+            "arbeitsblatt.pdf" in t for r, t in tutor.session.turns if r == "user"),
+    }
+
+
+async def scenario_goal_check(cfg):
+    """A goal check sets a task, judges the next message, records it, and
+    gives up after two tries. The model is replaced: what is under test is
+    the flow and what gets recorded."""
+    import tempfile
+    from app import objectives, study
+
+    cfg.paths.study_dir = tempfile.mkdtemp()
+    bus = EventBus()
+    tutor = FakeTutor(cfg, bus, [], voice=False)
+    chapter = types.SimpleNamespace(number=3, can_do=["Bestellungen aufgeben"])
+    tutor.chapter = chapter
+    tutor.goals = lambda: objectives.status(cfg.study_path, "Testbuch", chapter)
+
+    verdicts = [(False, "Use «einen»."), (True, "Good.")]
+
+    async def task_(*a, **k):
+        return "Order a coffee."
+
+    async def judge(llm, level, goal, task, answer):
+        return objectives.precheck(answer) or verdicts.pop(0)
+
+    real = study.goal_task, study.judge_goal
+    study.goal_task, study.judge_goal = task_, judge
+    runner = ConversationRunner(tutor, bus)
+    events: list[dict] = []
+    collector = asyncio.create_task(collect(bus, events))
+    try:
+        task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.05)
+        runner.submit({"action": "check_goal", "value": 0})
+        await asyncio.sleep(0.05)
+        runner.submit({"action": "say", "value": "I would order a coffee please"})
+        await asyncio.sleep(0.05)
+        runner.submit({"action": "say", "value": "Ein Kaffee bitte"})
+        await asyncio.sleep(0.05)
+        runner.submit({"action": "say", "value": "Danke!"})
+        await asyncio.sleep(0.1)
+        runner.request_stop()
+        await asyncio.wait_for(task, timeout=3)
+    finally:
+        study.goal_task, study.judge_goal = real
+        collector.cancel()
+
+    results = [e for e in events if e["type"] == "goal_result"]
+    status = objectives.status(cfg.study_path, "Testbuch", chapter)[0]
+    return {
+        "the task is set as a tutor turn": any(
+            "Order a coffee." in e.get("text", "") for e in events
+            if e["type"] == "tutor_turn"),
+        "an English answer fails without the model": (
+            bool(results) and results[0]["passed"] is False
+            and "English" in results[0]["note"]),
+        "two attempts, then the check ends": len(results) == 2,
+        "answers were not sent to the tutor as chat": all(
+            "Kaffee" not in r[0] for r in tutor.responded),
+        "the next message is conversation again": any(
+            r[0] == "Danke!" for r in tutor.responded),
+        "the log records the second-try fail": (
+            status.attempts == 2 and status.demonstrated is False),
+    }
+
+
+async def scenario_goal_pass_and_manual(cfg):
+    import tempfile
+    from app import objectives, study
+
+    cfg.paths.study_dir = tempfile.mkdtemp()
+    bus = EventBus()
+    tutor = FakeTutor(cfg, bus, [], voice=False)
+    chapter = types.SimpleNamespace(number=3, can_do=["A", "B"])
+    tutor.chapter = chapter
+    tutor.goals = lambda: objectives.status(cfg.study_path, "Testbuch", chapter)
+
+    async def task_(*a, **k):
+        return "Do A."
+
+    async def judge(*a, **k):
+        return True, "Good."
+
+    real = study.goal_task, study.judge_goal
+    study.goal_task, study.judge_goal = task_, judge
+    runner = ConversationRunner(tutor, bus)
+    events: list[dict] = []
+    collector = asyncio.create_task(collect(bus, events))
+    try:
+        task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.05)
+        runner.submit({"action": "mark_goal", "value": 1, "done": True})
+        runner.submit({"action": "check_goal", "value": 0})
+        runner.submit({"action": "say", "value": "Ich mache A."})
+        await asyncio.sleep(0.05)
+        kinds_then = [e["type"] for e in events]
+        runner.submit({"action": "mark_goal", "value": 0, "done": False})
+        await asyncio.sleep(0.05)
+        runner.request_stop()
+        await asyncio.wait_for(task, timeout=3)
+    finally:
+        study.goal_task, study.judge_goal = real
+        collector.cancel()
+
+    final = objectives.status(cfg.study_path, "Testbuch", chapter)
+    return {
+        "a pass ends the check at once": sum(
+            1 for e in events if e["type"] == "goal_result") == 1,
+        "all goals done announces the chapter": "chapter_done" in kinds_then,
+        "a manual mark is recorded as manual": final[1].by == "manual",
+        "a manual 'not yet' undoes a pass": final[0].demonstrated is False,
+    }
+
+
 def scenario_echo_guard(cfg):
     """Similarity guard: reject own speech, keep genuine user turns.
 
@@ -377,7 +605,9 @@ def scenario_echo_guard(cfg):
 async def main() -> int:
     failures = 0
     for fn in (scenario_basic, scenario_control, scenario_no_barge_in,
-               scenario_mode_handoff, scenario_drill, scenario_echo_guard):
+               scenario_mode_handoff, scenario_drill, scenario_typed,
+               scenario_attachment, scenario_goal_check,
+               scenario_goal_pass_and_manual, scenario_echo_guard):
         cfg = load_config()  # fresh config per scenario
         print(f"\n{fn.__name__}:")
         try:

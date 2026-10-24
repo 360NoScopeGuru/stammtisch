@@ -1,6 +1,8 @@
 """Turn a German textbook PDF into the course the tutor teaches from.
 
     python scripts/ingest_textbook.py "path/to/Akademie Deutsch A1+ Band 1.pdf"
+    python scripts/ingest_textbook.py "path/to/B1 book.pdf" --level B1
+    python scripts/ingest_textbook.py book.pdf --vision --contents 4-5
     python scripts/ingest_textbook.py --show          # print what was built
 
 Why bother: the tutor without a syllabus teaches whatever the model thinks of
@@ -22,6 +24,11 @@ anything is written. A silently half-parsed syllabus would be worse than none,
 because it would look like a course while quietly skipping half the grammar.
 Every failure here is loud and refuses to write.
 
+A book with no usable text layer — the B1 and B2 volumes are scans — is read
+from images of its contents pages instead, by app/bookreader.py, and held to
+the same standard: two independent readings that must agree, or nothing is
+written. `--vision` forces that path; it needs the LLM server running.
+
 Output goes to `paths.courses_dir` (default `./courses`), which is gitignored:
 this content is copyrighted and the repository is public.
 """
@@ -29,6 +36,7 @@ this content is copyrighted and the repository is public.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
 import sys
@@ -45,8 +53,10 @@ UEBERSICHT = "ÜBERSICHT GRAMMATIK UND REDEMITTEL"
 
 # "26 2 DEUTSCHE SPRACHE, SCHWERE SPRACHE?" — optional book page, chapter
 # number, then an all-caps title. Chapter one has no page number printed.
+# Later volumes carry on the numbering — the A2 book opens on chapter 10 — so
+# the chapter number can have two digits.
 CHAPTER_LINE = re.compile(
-    r"^(?:(\d{1,3})\s+)?([1-9])\s+([^a-zäöü]{3,}?)\s*$"
+    r"^(?:(\d{1,3})\s+)?([1-9]\d?)\s+([^a-zäöü]{3,}?)\s*$"
 )
 # "1 Freut mich!" — same shape, but the title is not shouting.
 UNIT_LINE = re.compile(r"^([1-9])\s+(\S.*[a-zäöü].*)$")
@@ -172,7 +182,11 @@ def collect_references(pages: list[str], chapters: list[curriculum.Chapter]) -> 
     for text in pages:
         if UEBERSICHT not in text:
             continue
-        m = re.search(r"(\d)\s*" + re.escape(UEBERSICHT), text)
+        # The chapter number opens the heading's line: "6 ÜBERSICHT…", or
+        # "10ÜBERSICHT…" in the A2 book. Anchored to the line start, because
+        # the running header just above runs page and chapter together
+        # ("KAPITEL   6126") and an unanchored match reads that as 26.
+        m = re.search(r"(?:^|\n)(\d{1,2})\s*" + re.escape(UEBERSICHT), text)
         if not m:
             continue
         number = int(m.group(1))
@@ -229,7 +243,9 @@ def validate(chapters: list[curriculum.Chapter],
     for c in chapters:
         if not c.title:
             problems.append(f"chapter {c.number} has no title")
-        if not c.units:
+        # The B2 volume prints no sections in its contents at all; a book
+        # that lists them for some chapters and not others is misread.
+        if not c.units and any(x.units for x in chapters):
             problems.append(f"chapter {c.number} ({c.title}) has no sections")
 
     return problems
@@ -277,6 +293,84 @@ def build(pdf: Path, level: str) -> dict:
     }
 
 
+async def build_vision(pdf: Path, level: str, contents: str = "") -> dict:
+    """The contents pages read as images. See app/bookreader.py."""
+    from app import bookreader, documents
+    from app.llm import LlmClient
+
+    cfg = load_config()
+    llm = LlmClient(cfg)
+    ok, msg = await llm.health()
+    if not ok:
+        await llm.aclose()
+        raise IngestError(f"reading a scanned book needs the LLM: {msg}")
+
+    def say(m):
+        print(f"  … {m}", flush=True)
+
+    try:
+        doc = documents.load_path(pdf)
+        if contents:
+            numbers = documents.parse_pages(contents, doc.page_count)
+            chapters_page = numbers[0]
+            syllabus_page = numbers[1] if len(numbers) > 1 else numbers[0] + 1
+        else:
+            chapters_page, syllabus_page = await bookreader.find_contents(
+                llm, doc, progress=say)
+        chapters, uncertain = await bookreader.read_contents(
+            llm, doc, chapters_page, syllabus_page, progress=say)
+    except (bookreader.ReadError, documents.DocumentError) as e:
+        raise IngestError(str(e)) from e
+    finally:
+        await llm.aclose()
+
+    problems = validate(chapters, [(c.can_do, c.grammar) for c in chapters])
+    # A chapter the readings agree is empty is still not a chapter of this
+    # book: every volume gives each one its goals and its grammar.
+    problems += [f"chapter {c.number} has no {what}" for c in chapters
+                 for what, items in (("can-do statements", c.can_do),
+                                     ("grammar", c.grammar)) if not items]
+    if problems:
+        raise IngestError("the contents did not hold together:\n  - "
+                          + "\n  - ".join(problems))
+
+    # A text layer, if there is one, still supplies the chapter summaries.
+    refs = 0
+    try:
+        pages = page_texts(pdf)
+        if sum(len(t) for t in pages) > 1000:
+            refs = collect_references(pages, chapters)
+    except Exception:
+        pages = []
+
+    return {
+        "title": pdf.stem,
+        "level": level,
+        "source": pdf.name,
+        "read_by": "vision",
+        # Spelling no two readings agreed on: printed after ingesting, for
+        # the learner to compare with the book.
+        "uncertain": uncertain,
+        "contents_pages": [chapters_page, syllabus_page],
+        "ingested_at": datetime.now().isoformat(timespec="seconds"),
+        "pages": doc.page_count,
+        "references_found": refs,
+        "chapters": [
+            {
+                "number": c.number,
+                "title": c.title,
+                "book_page": c.book_page,
+                "units": [{"number": u.number, "title": u.title} for u in c.units],
+                "topics": c.topics,
+                "can_do": c.can_do,
+                "grammar": c.grammar,
+                "reference": c.reference,
+            }
+            for c in chapters
+        ],
+    }
+
+
 def show(course: curriculum.Course) -> None:
     print(f"\n  {course.title}   ({course.level}, "
           f"{len(course.chapters)} chapters)\n")
@@ -302,6 +396,10 @@ def main() -> int:
     ap.add_argument("--name", default="", help="output file stem")
     ap.add_argument("--show", action="store_true",
                     help="print the course that is already ingested")
+    ap.add_argument("--vision", action="store_true",
+                    help="read the contents pages as images (scanned books)")
+    ap.add_argument("--contents", default="",
+                    help="the contents pages, e.g. 4-5, if they cannot be found")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -320,11 +418,19 @@ def main() -> int:
         print(f"  no such file: {pdf}")
         return 1
 
-    try:
-        data = build(pdf, args.level)
-    except IngestError as e:
-        print(f"\n  could not ingest {pdf.name}:\n  {e}\n")
-        return 1
+    data = None
+    if not args.vision:
+        try:
+            data = build(pdf, args.level)
+        except IngestError as e:
+            print(f"\n  the text layer did not parse: {str(e).splitlines()[0]}")
+            print("  reading the contents pages as images instead…\n")
+    if data is None:
+        try:
+            data = asyncio.run(build_vision(pdf, args.level, args.contents))
+        except IngestError as e:
+            print(f"\n  could not ingest {pdf.name}:\n  {e}\n")
+            return 1
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = args.name or re.sub(r"[^a-z0-9]+", "-", pdf.stem.lower()).strip("-")
@@ -334,9 +440,19 @@ def main() -> int:
 
     course = curriculum.load(out)
     show(course)
+    if data.get("uncertain"):
+        print("  These may be misread: the readings disagreed on them, or they do")
+        print("  not look like German. Check them against the book, and fix them")
+        print("  in the file below if they are wrong:")
+        for item in data["uncertain"]:
+            print(f"    {item}")
+        print()
     missing = [c.number for c in course.chapters if not c.reference]
     print(f"  written to {out}")
-    if missing:
+    if missing and data.get("read_by") == "vision":
+        print("  note: a scanned book's end-of-chapter grammar summaries are not "
+              "read")
+    elif missing:
         print(f"  note: no reference section found for chapter(s) {missing}")
     return 0
 

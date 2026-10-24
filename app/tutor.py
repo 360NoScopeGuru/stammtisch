@@ -1,32 +1,39 @@
 r"""The conversation loop.
 
 Turn structure:
-    utterance -> STT -> [ LLM stream -> sentence split -> TTS -> speaker ]
-                     \-> (async, off critical path) correction pass
+    typed text or (utterance -> STT)
+        -> [ LLM stream -> screen, and sentence split -> TTS -> speaker ]
+        \-> (async, off critical path) correction pass
 
-The bracketed part is pipelined: sentence 1 is already playing while the model
-is still generating sentence 3. That is what keeps time-to-first-audio ~1s.
+Text is the primary channel. The reply streams to the screen token by token,
+and if replies are read aloud, each finished sentence goes to the speaker while
+the model is still writing the next one.
+
+The two directions are independent. Typing while hearing the tutor's German
+pronounced is the normal setup; the microphone and Whisper are loaded only
+when voice input is switched on, so a text session starts in seconds and needs
+neither.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import queue
+import re
+import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from dataclasses import dataclass, field
 
-from . import (curriculum, drills, homework, progress, prompts, scenarios,
-               segments)
-from .audio_io import MicListener, Speaker
+from . import (classlog, curriculum, documents, drills, homework, langid,
+               objectives, progress, prompts, scenarios, segments, srs)
 from .config import Config
 from .corrections import filter_corrections
 from .events import EventBus
 from .llm import LlmClient
 from .review import SessionLog
 from .sentences import SentenceStreamer
-from .stt import Transcriber
-from .tts import Synthesizer
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +42,11 @@ log = logging.getLogger(__name__)
 # so the tail of the tutor's own voice does not open a new utterance.
 SPEECH_TAIL_MS = 250
 
+# Pages stay in the conversation for this many further turns, so "and number
+# 3?" still has the worksheet in view. After that they are dropped from what
+# is sent: each image is ~256 tokens and seconds of encoding on every turn.
+ATTACHMENT_TURNS = 6
+
 
 @dataclass
 class Turn:
@@ -42,6 +54,51 @@ class Turn:
     text: str
     latency_ms: float | None = None
     corrections: list[dict] = field(default_factory=list)
+
+
+class _NoMic:
+    """Stands in for MicListener while voice input is off.
+
+    The turn logic only ever touches these attributes, so it runs unchanged
+    with or without a microphone instead of branching on one everywhere.
+    """
+
+    def __init__(self) -> None:
+        self.tutor_speaking = threading.Event()
+        self.interrupted = threading.Event()
+        self.utterances: queue.Queue = queue.Queue()
+        self.async_utterances = None
+
+    def attach_loop(self, loop):
+        return None
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
+class _Silent:
+    """Stands in for Speaker while replies are not read aloud."""
+
+    def start(self) -> None:
+        pass
+
+    def play(self, pcm) -> None:
+        pass
+
+    def wait_until_done(self, timeout: float | None = None) -> bool:
+        return True
+
+    def cancel(self) -> None:
+        pass
+
+    def resume(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
 class Tutor:
@@ -55,7 +112,7 @@ class Tutor:
         # Everything the learner has done before, rebuilt from the saved
         # sessions. Without it the tutor re-teaches «Guten Morgen» every launch
         # and never notices a mistake becoming a habit.
-        self.progress = progress.build(cfg.sessions_path)
+        self.progress = progress.build(cfg.sessions_path, cfg.homework_path)
         if not self.progress.is_empty:
             log.info("resuming: %d past session(s), %d words met, "
                      "%d recurring mistake(s)",
@@ -63,24 +120,136 @@ class Tutor:
                      len(self.progress.recurring(limit=99)))
         cfg.tutor.chapter = self.resume_chapter()
         self.chapter = self._resolve_chapter(cfg.tutor.chapter)
+        self._follow_book_level()
         self.scenario = self._scenario_for(self.chapter)
-        self.history: list[dict[str, str]] = []
+        self.history: list[dict] = []
         # The most recent German phrase spoken, so "let me try that" has
         # something to drill.
         self.last_german = ""
         self.session = SessionLog(cfg, level=cfg.tutor.level, scenario=self.scenario.key)
+        # Files the learner has shared this session, by upload id.
+        self.documents: dict[str, documents.Document] = {}
+        # The worked answers to the exercise on the latest page, if it has
+        # blanks. Never shown to the learner; see _start_key.
+        self.answer_key = ""
+        self._key_task: asyncio.Task | None = None
 
-        self.stt = Transcriber(cfg)
-        self.tts = Synthesizer(cfg)
         self.llm = LlmClient(cfg)
-        self.mic = MicListener(cfg)
-        self.speaker = Speaker(cfg)
+        self.stt = None
+        self.tts = None
+        self.mic = _NoMic()
+        self.speaker = _Silent()
+        self._speech_q: asyncio.Queue[str] | None = None
+        self._speech_task: asyncio.Task | None = None
+
+        if cfg.voice_input:
+            self._load_voice_input()
+        if cfg.tutor.speak:
+            self._load_speech()
 
         self._pending: set[asyncio.Task] = set()
 
     @property
     def mode(self) -> str:
         return self.cfg.tutor.mode
+
+    # ---- channels -----------------------------------------------------
+
+    @property
+    def listening(self) -> bool:
+        """Is a real microphone attached?"""
+        return self.stt is not None and not isinstance(self.mic, _NoMic)
+
+    @property
+    def speaking_aloud(self) -> bool:
+        return self.tts is not None and self.cfg.tutor.speak
+
+    @property
+    def typed(self) -> bool:
+        """Does the learner type rather than speak? Shapes the prompt."""
+        return not self.listening
+
+    def _load_voice_input(self) -> None:
+        """Whisper and the microphone. Seconds to load and ~2 GB of VRAM,
+        which is why a text session never pays for them."""
+        from .audio_io import MicListener
+        from .stt import Transcriber
+
+        if self.stt is None:
+            self.stt = Transcriber(self.cfg)
+        self.mic = MicListener(self.cfg)
+
+    def _load_speech(self) -> bool:
+        """Piper and the speaker. Missing voices degrade to text, loudly."""
+        if self.tts is not None:
+            self.cfg.tutor.speak = True
+            return True
+        try:
+            from .audio_io import Speaker
+            from .tts import Synthesizer
+
+            self.tts = Synthesizer(self.cfg)
+            self.speaker = Speaker(self.cfg)
+        except Exception as e:
+            log.warning("replies will not be read aloud: %s", e)
+            self.cfg.tutor.speak = False
+            self.tts, self.speaker = None, _Silent()
+            return False
+        self.cfg.tutor.speak = True
+        return True
+
+    async def set_voice_input(self, on: bool) -> bool:
+        """Switch the microphone on or off mid-session."""
+        if on == self.listening:
+            return False
+        if on:
+            self.bus.publish("notice", message="Loading speech recognition…")
+            try:
+                await asyncio.to_thread(self._load_voice_input)
+                await asyncio.to_thread(self.stt.warm)
+                self.mic.attach_loop(asyncio.get_running_loop())
+                self.mic.start()
+            except Exception as e:
+                log.exception("could not start voice input")
+                self.mic = _NoMic()
+                self.bus.publish("error", message=f"Microphone unavailable: {e}")
+                return False
+            self.cfg.tutor.input = "voice"
+        else:
+            self.mic.stop()
+            self.mic = _NoMic()
+            self.cfg.tutor.input = "text"
+        self._publish_config()
+        return True
+
+    async def set_speak(self, on: bool) -> bool:
+        if on == self.speaking_aloud:
+            return False
+        if on:
+            started = self.tts is None
+            ok = await asyncio.to_thread(self._load_speech)
+            if not ok:
+                self.bus.publish("error", message="No voices available — run "
+                                 "python scripts/fetch_models.py")
+                return False
+            if started:
+                self.speaker.start()
+        else:
+            self.speaker.cancel()
+            self._clear_speech_queue()
+            self.cfg.tutor.speak = False
+        self._publish_config()
+        return True
+
+    @property
+    def audio_queue(self):
+        return self.mic.async_utterances if self.listening else None
+
+    def interrupt(self) -> None:
+        """Stop generating and stop talking. Safe from any thread."""
+        self.mic.interrupted.set()
+        self.speaker.cancel()
+        self._clear_speech_queue()
 
     # ---- the course ---------------------------------------------------
 
@@ -93,10 +262,16 @@ class Tutor:
         """
         if not (self.cfg.tutor.resume and self.course) or self.cfg.tutor.chapter:
             return self.cfg.tutor.chapter
+        # The class sets the pace: if the learner has logged a class on a
+        # later chapter than the last session, that is where they are now.
+        noted = classlog.latest_chapter(self.cfg.study_path)
+        last = self.progress.last_chapter
+        if noted and self.course.get(noted) and (not last or noted > last):
+            return noted
         # Carry on where the last session stopped; on a first ever run that is
         # simply the start of the book.
         first = self.course.first()
-        return self.progress.last_chapter or (first.number if first else 0)
+        return last or (first.number if first else 0)
 
     def _resolve_chapter(self, number: int) -> curriculum.Chapter | None:
         """Chapter `number`, or None to fall back to the stock scenarios."""
@@ -108,6 +283,17 @@ class Tutor:
                         number, self.course.title, self.cfg.tutor.scenario)
         return chapter
 
+    def _follow_book_level(self) -> None:
+        """Teach at the level of the volume the chapter is in.
+
+        The course runs from A1 to B2 across four books. A learner on
+        chapter 20 is in the B1 book, and A1 explanations of the B1 grammar
+        would be both too slow and wrong for what the class expects.
+        """
+        level = getattr(self.chapter, "level", "") if self.chapter else ""
+        if level and level.upper() in prompts.LEVELS:
+            self.cfg.tutor.level = level.upper()
+
     def _scenario_for(self, chapter: curriculum.Chapter | None):
         if chapter is None:
             return scenarios.get(self.cfg.tutor.scenario)
@@ -116,6 +302,15 @@ class Tutor:
     def _course_reference(self) -> str:
         """The book's own end-of-chapter summary, for the system prompt."""
         return self.chapter.reference_extract() if self.chapter else ""
+
+    def goals(self) -> list[objectives.GoalStatus]:
+        if not (self.course and self.chapter):
+            return []
+        return objectives.status(self.cfg.study_path, self.course.title,
+                                 self.chapter)
+
+    def _open_goals(self) -> list[str]:
+        return [g.text for g in self.goals() if not g.demonstrated]
 
     # ---- setup --------------------------------------------------------
 
@@ -133,18 +328,47 @@ class Tutor:
             log.info("could not pin model (not Ollama?): %s", err)
         log.info("warming models...")
         t0 = time.perf_counter()
-        self.stt.warm()
-        self.tts.warm()
+        if self.stt is not None:
+            await asyncio.to_thread(self.stt.warm)
+        if self.tts is not None:
+            await asyncio.to_thread(self.tts.warm)
         log.info("warm in %.1fs", time.perf_counter() - t0)
 
-    def _messages(self) -> list[dict[str, str]]:
+    def _messages(self, attachments: bool = False) -> list[dict]:
+        today = date.today()
+        study = srs.brief(self.cfg.study_path, self.progress, today)
+        history = "\n".join(x for x in (self.progress.brief(), study) if x)
         system = prompts.system_prompt(
             self.mode, self.cfg.tutor.level, self.scenario.description,
             reference=self._course_reference(),
-            history=self.progress.brief(),
+            history=history,
+            typed=self.typed,
+            spoken=self.speaking_aloud,
+            attachments=attachments,
+            class_notes=classlog.brief(self.cfg.study_path, today),
+            goals=self._open_goals(),
         )
+        if attachments and self.answer_key:
+            system += "\n" + prompts.KEY_BLOCK.format(key=self.answer_key)
         keep = self.cfg.tutor.history_turns * 2
-        return [{"role": "system", "content": system}, *self.history[-keep:]]
+        return [{"role": "system", "content": system},
+                *self._trim_images(self.history[-keep:])]
+
+    def _trim_images(self, turns: list[dict]) -> list[dict]:
+        """Keep only recent pages in what is sent to the model.
+
+        The text that went with them stays, along with a note of what was
+        attached, so the conversation still makes sense without the pixels.
+        """
+        out = []
+        for age, msg in enumerate(reversed(turns)):
+            content = msg.get("content")
+            if isinstance(content, list) and age >= ATTACHMENT_TURNS * 2:
+                text = " ".join(p.get("text", "") for p in content
+                                if p.get("type") == "text")
+                msg = {**msg, "content": text + " (pages no longer shown)"}
+            out.append(msg)
+        return list(reversed(out))
 
     # ---- speaking -----------------------------------------------------
 
@@ -154,31 +378,71 @@ class Tutor:
         In mentor mode a single sentence is often mixed — English prose with a
         German phrase inside guillemets — so it may become several segments.
         """
+        if self.tts is None:
+            return
         # Each fragment is classified by its own words (app/langid.py). The
         # mode only breaks ties on fragments too short to call, where practice
         # mode means an unmarked "Ja." is German and mentor mode means it is
         # more likely an English aside.
         tie_break = segments.DE if self.mode == prompts.PRACTICE else segments.EN
 
-        spoken_de: list[str] = []
         for lang, chunk in segments.split_segments(text, tie_break):
             if self.mic.interrupted.is_set():
                 return
-            if lang == segments.DE:
-                spoken_de.append(chunk)
             pcm = await asyncio.to_thread(self.tts.synthesize, chunk, lang)
             if len(pcm):
                 self.speaker.play(pcm)
 
-        # Remember the German so the learner can ask to say it back. Only
-        # phrases worth drilling: a bare "Ja." is not a pronunciation exercise.
-        if spoken_de:
-            candidate = " ".join(spoken_de).strip()
+    def _remember_german(self, text: str) -> None:
+        """Keep the last drillable German phrase for "let me try that"."""
+        tie_break = segments.DE if self.mode == prompts.PRACTICE else segments.EN
+        german = [chunk for lang, chunk in segments.split_segments(text, tie_break)
+                  if lang == segments.DE]
+        if german:
+            candidate = " ".join(german).strip()
             if len(drills.words(candidate)) >= 2:
                 self.last_german = candidate
 
+    # In text mode speech runs beside the conversation rather than in it: the
+    # learner reads the reply and can type the next message while it is still
+    # being spoken. A new turn cuts off whatever is left.
+
+    def _ensure_speech_worker(self) -> None:
+        if self._speech_task is None or self._speech_task.done():
+            self._speech_q = asyncio.Queue()
+            self._speech_task = asyncio.create_task(self._speech_worker())
+
+    async def _speech_worker(self) -> None:
+        assert self._speech_q is not None
+        while True:
+            sentence = await self._speech_q.get()
+            try:
+                await self._speak(sentence)
+            except Exception:
+                log.exception("speech failed (non-fatal)")
+
+    def _clear_speech_queue(self) -> None:
+        q = self._speech_q
+        if q is None:
+            return
+        while not q.empty():
+            q.get_nowait()
+
+    def _queue_speech(self, sentence: str) -> None:
+        self._ensure_speech_worker()
+        assert self._speech_q is not None
+        self._speech_q.put_nowait(sentence)
+
     async def say(self, text: str) -> None:
         """Speak a fixed line (openers, errors). Not streamed."""
+        self._remember_german(text)
+        if not self.speaking_aloud:
+            return
+        if not self.listening:
+            self.speaker.resume()
+            self.mic.interrupted.clear()
+            self._queue_speech(text)
+            return
         self.mic.tutor_speaking.set()
         self.speaker.resume()
         self.mic.interrupted.clear()
@@ -192,46 +456,96 @@ class Tutor:
         await asyncio.sleep(SPEECH_TAIL_MS / 1000)
         self.mic.tutor_speaking.clear()
 
-    async def respond(self, user_text: str) -> Turn:
-        """Stream one tutor turn, speaking sentence-by-sentence."""
-        self.history.append({"role": "user", "content": user_text})
+    async def respond(self, user_text: str,
+                      pages: list[documents.Page] | None = None,
+                      note: str = "") -> Turn:
+        """Stream one tutor turn to the screen, and to the speaker if on.
+
+        `pages` are images shown to the model with this message; `note` names
+        them ("[attached worksheet.pdf, page 3 of 4]") so that the turn still
+        makes sense once the images have aged out of the context.
+        """
+        text = f"{note}\n{user_text}".strip() if note else user_text
+        if pages:
+            # Read first, teach second. Asked to do both at once the model
+            # skims the page and teaches from what it expects to be there;
+            # asked only to transcribe, it reads. The transcript also stays
+            # in the conversation after the images age out of it, and the
+            # learner is shown it, so a misreading is visible rather than
+            # silently taught from.
+            transcript = await self.read_pages(user_text, pages)
+            self._start_key(transcript)
+            if transcript:
+                text = (f"{note}\nWhat the page says, transcribed exactly:\n"
+                        f"{transcript}\n\n{user_text}").strip()
+            # Whole pages here, not halves: the reading is done, and these
+            # are for layout and pictures. Halves would double the images
+            # re-sent on every turn while the page stays in view.
+            content: str | list = [{"type": "text", "text": text},
+                                   *documents.image_parts(pages, tile=False)]
+        else:
+            content = text
+        self.history.append({"role": "user", "content": content})
+
+        recent_pages = any(isinstance(m.get("content"), list)
+                           for m in self.history[-ATTACHMENT_TURNS * 2:])
+        # Voice: sentences are spoken in line, and the mic stays gated until
+        # the speaker is done, or the tutor hears itself. Text: speech runs
+        # beside the reply and never holds the next turn up.
+        inline_speech = self.listening and self.speaking_aloud
+        if self.typed:
+            max_tokens = self.cfg.llm.text_max_tokens
+            if recent_pages:
+                max_tokens = int(max_tokens * 1.5)
+        else:
+            max_tokens = self.cfg.llm.max_tokens * (2 if recent_pages else 1)
 
         streamer = SentenceStreamer()
-        spoken: list[str] = []
+        written: list[str] = []
         t0 = time.perf_counter()
-        first_audio_ms: float | None = None
+        first_ms: float | None = None
 
         self.mic.interrupted.clear()
+        self.speaker.cancel()          # a new turn cuts off the old one
+        self._clear_speech_queue()
         self.speaker.resume()
-        self.mic.tutor_speaking.set()
+        if inline_speech:
+            self.mic.tutor_speaking.set()
 
         async def emit(sentence: str) -> None:
             """Strip any mode token, then speak what remains."""
-            nonlocal first_audio_ms
-            # Strip any stray mode token so it is never read aloud. We do not
-            # act on it — see the note in prompts.py.
             clean, stray = segments.extract_mode(sentence)
             if stray:
                 log.debug("stripped stray mode token (%s) from reply", stray)
-            if not clean:
+            clean = clean.lstrip("-•* ").strip()
+            if not clean or not any(c.isalnum() for c in clean):
                 return
-            if first_audio_ms is None:
-                first_audio_ms = (time.perf_counter() - t0) * 1000
-            spoken.append(clean)
-            await self._speak(clean)
+            if inline_speech:
+                await self._speak(clean)
+            elif self.speaking_aloud:
+                self._queue_speech(clean)
 
         try:
-            async for delta in self.llm.stream(self._messages()):
+            async for delta in self.llm.stream(
+                    self._messages(attachments=recent_pages),
+                    max_tokens=max_tokens):
                 if self.mic.interrupted.is_set():
-                    log.info("cutting generation — user interrupted")
+                    log.info("cutting generation — interrupted")
                     break
-                for sentence in streamer.feed(delta):
+                if first_ms is None:
+                    first_ms = (time.perf_counter() - t0) * 1000
+                written.append(delta)
+                self.bus.publish("tutor_delta", text=delta)
+                # A line break ends a spoken sentence even without a full
+                # stop, or each line of a conjugation list runs into the next.
+                for sentence in streamer.feed(delta.replace("\n", ". \n")):
                     await emit(sentence)
 
             if not self.mic.interrupted.is_set():
                 for sentence in streamer.flush():
                     await emit(sentence)
-                await asyncio.to_thread(self.speaker.wait_until_done, 60.0)
+                if inline_speech:
+                    await asyncio.to_thread(self.speaker.wait_until_done, 60.0)
             else:
                 self.speaker.cancel()
 
@@ -241,33 +555,99 @@ class Tutor:
             self.history.pop()  # don't poison history with a failed turn
             raise RuntimeError(str(e)) from e
         finally:
-            await self._end_speaking()
+            if inline_speech:
+                await self._end_speaking()
 
-        reply = " ".join(spoken).strip()
+        reply = _tidy("".join(written))
         if reply:
             self.history.append({"role": "assistant", "content": reply})
+            self._remember_german(reply)
 
-        if first_audio_ms is not None:
-            log.info("time-to-first-audio: %.0f ms", first_audio_ms)
+        if first_ms is not None:
+            log.info("time-to-first-token: %.0f ms", first_ms)
 
-        return Turn(role="assistant", text=reply, latency_ms=first_audio_ms)
+        return Turn(role="assistant", text=reply, latency_ms=first_ms)
+
+    def _start_key(self, transcript: str) -> None:
+        """Solve an exercise with blanks in the background.
+
+        Solving in passing while teaching, the model told a learner the first
+        gap of «Wir ___ Lisa und Marie» was «kennen»; asked only to solve,
+        it got 16 of 19 gaps on that page right. The first reply does not
+        need the key — it explains the exercise and asks for item one — so
+        the solving runs while that streams, and is ready by the time the
+        learner has typed an answer.
+        """
+        if self._key_task is not None:
+            self._key_task.cancel()
+        self.answer_key = ""
+        if not re.search(r"_{2,}|\.{4,}", transcript or ""):
+            self._key_task = None
+            return
+        self._key_task = asyncio.create_task(self._solve(transcript))
+
+    async def _solve(self, transcript: str) -> None:
+        raw = await self.llm.complete_json(
+            prompts.solve_messages(self.cfg.tutor.level, transcript),
+            temperature=0.0, max_tokens=1500)
+        lines = []
+        for item in (raw or {}).get("items") or []:
+            if not isinstance(item, dict) or not str(item.get("answer", "")).strip():
+                continue
+            also = [str(a) for a in item.get("also") or [] if str(a).strip()]
+            lines.append(f"({item.get('n', '?')}) {str(item['answer']).strip()}"
+                         + (f" (also: {', '.join(also)})" if also else "")
+                         + (f" — {str(item.get('why', '')).strip()}"
+                            if item.get("why") else ""))
+        self.answer_key = "\n".join(lines)[:3000]
+        if self.answer_key:
+            log.info("answer key ready: %d item(s)", len(lines))
+
+    async def read_pages(self, question: str,
+                         pages: list[documents.Page]) -> str:
+        """An exact transcription of the part of the pages being asked about."""
+        self.bus.publish("notice", message="Reading the page…")
+        t0 = time.perf_counter()
+        text = await self.llm.complete(prompts.read_messages(question, pages),
+                                       max_tokens=1200)
+        log.info("read %d page(s) in %.1fs", len(pages), time.perf_counter() - t0)
+        text = (text or "").strip()
+        if text.startswith("```"):
+            text = text.strip("`").split("\n", 1)[-1].strip()
+        if text:
+            self.bus.publish("page_read", text=text)
+        return text[:6000]
 
     # ---- corrections (never on the critical path) ----------------------
 
-    def queue_correction(self, user_text: str) -> None:
-        task = asyncio.create_task(self._correct(user_text))
+    def queue_correction(self, user_text: str, typed: bool = False) -> None:
+        task = asyncio.create_task(self._correct(user_text, typed))
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
 
-    async def _correct(self, user_text: str) -> None:
+    def should_correct(self, text: str, typed: bool) -> bool:
+        """Only grade German.
+
+        Running the corrector on an English sentence produced feedback like
+        'Hof Arjo' -> 'Haus Arjo': confident, authoritative, and about a word
+        the learner never said.
+        """
+        if self.mode == prompts.PRACTICE:
+            return True
+        if typed:
+            return langid.detect(text, default=langid.EN) == langid.DE
+        return getattr(self.stt, "last_language", None) == "de"
+
+    async def _correct(self, user_text: str, typed: bool = False) -> None:
         name = self.cfg.learner.name
         result = await self.llm.complete_json(
-            prompts.corrector_messages(self.cfg.tutor.level, user_text, name)
+            prompts.corrector_messages(self.cfg.tutor.level, user_text, name,
+                                       typed=typed)
         )
         if not result:
             return
         corrections = [c for c in result.get("corrections", []) if isinstance(c, dict)]
-        vocab = [v for v in result.get("vocab", []) if isinstance(v, str)]
+        vocab, glossary = parse_vocab(result.get("vocab", []))
 
         # The prompt asks the model to leave names alone; it does not always
         # listen, and it cannot recognise a name it has never seen. Enforce it
@@ -277,17 +657,18 @@ class Tutor:
             log.info("dropped correction (proper noun or no-op): %r -> %r",
                      c.get("original"), c.get("corrected"))
 
-        self.session.add_feedback(user_text, corrections, vocab)
+        self.session.add_feedback(user_text, corrections, vocab, glossary)
         for c in corrections:
             log.info("correction: %r -> %r", c.get("original"), c.get("corrected"))
 
-        # Arrives after the spoken turn, so the UI patches it in retroactively.
+        # Arrives after the turn, so the UI patches it in retroactively.
         if corrections or vocab:
             self.bus.publish(
                 "corrections",
                 utterance=user_text,
                 items=corrections,
                 vocab=vocab,
+                glossary=glossary,
             )
 
     # ---- homework ------------------------------------------------------
@@ -295,9 +676,12 @@ class Tutor:
     async def set_homework(self, count: int = 5) -> homework.Assignment | None:
         """Ask the model for an assignment on the current topic."""
         weaknesses = [m.label for m in self.progress.recurring(limit=3)]
+        topic = self.scenario.description
+        if notes := classlog.brief(self.cfg.study_path, date.today()):
+            topic += "\n\nWhat the class covered most recently:\n" + notes
         raw = await self.llm.complete_json(
             prompts.homework_messages(
-                self.cfg.tutor.level, self.scenario.description,
+                self.cfg.tutor.level, topic,
                 count=count, weaknesses=weaknesses,
             )
         )
@@ -390,6 +774,7 @@ class Tutor:
             return False
         self.chapter = chapter
         self.cfg.tutor.chapter = chapter.number
+        self._follow_book_level()
         self.scenario = self._scenario_for(chapter)
         self.cfg.tutor.scenario = self.scenario.key
         self.history.clear()  # a new chapter is a new lesson
@@ -423,6 +808,8 @@ class Tutor:
             title=self.scenario.title,
             chapter=self.chapter.number if self.chapter else None,
             course=self.course.title if self.course else None,
+            voice_input=self.listening,
+            speak=self.speaking_aloud,
         )
 
     # ---- lifecycle ----------------------------------------------------
@@ -431,6 +818,9 @@ class Tutor:
         if self._pending:
             log.info("finishing %d correction pass(es)...", len(self._pending))
             await asyncio.gather(*self._pending, return_exceptions=True)
+        for task in (self._speech_task, self._key_task):
+            if task is not None:
+                task.cancel()
         self.mic.stop()
         self.speaker.close()
         await self.llm.aclose()
@@ -438,3 +828,40 @@ class Tutor:
         # just folds in any correction that landed during the gather above.
         if saved := self.session.save():
             log.info("session saved: %s", saved[0])
+
+
+def parse_vocab(items) -> tuple[list[str], dict[str, str]]:
+    """The corrector's vocabulary, as words plus a German -> English glossary.
+
+    Asked for {"de": ..., "en": ...} objects, a model will sometimes still
+    return bare strings. Both are kept; only the meaning is optional.
+    """
+    words: list[str] = []
+    glossary: dict[str, str] = {}
+    for item in items or []:
+        if isinstance(item, str):
+            de, en = item.strip(), ""
+        elif isinstance(item, dict):
+            de = str(item.get("de", "")).strip()
+            en = str(item.get("en", "")).strip()
+        else:
+            continue
+        if not de or len(de) > 60:
+            continue
+        words.append(de)
+        if en:
+            glossary[de] = en[:80]
+    return words, glossary
+
+
+def _tidy(text: str) -> str:
+    """Strip mode tokens and stray whitespace from a finished reply, keeping
+    its line breaks — a conjugation list is unreadable flattened."""
+    lines = [segments.extract_mode(line)[0].rstrip() for line in text.split("\n")]
+    out = "\n".join(lines).strip()
+    # Told not to, gemma3 still writes *before* for emphasis now and then;
+    # the page shows plain text, so the asterisks would show as asterisks.
+    out = re.sub(r"(?<![\w*])\*{1,2}([^*\n]+?)\*{1,2}(?![\w*])", r"\1", out)
+    while "\n\n\n" in out:
+        out = out.replace("\n\n\n", "\n\n")
+    return out

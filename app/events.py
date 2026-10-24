@@ -15,8 +15,13 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-QUEUE_MAX = 256
+QUEUE_MAX = 1024
 REPLAY_MAX = 400
+
+# Not replayed to a late joiner. Status is a moment, not history; a streamed
+# fragment of a reply is superseded by the finished turn, and replaying a few
+# hundred of them would rebuild the bubble one word at a time.
+EPHEMERAL = {"status", "tutor_delta", "tutor_start", "notice"}
 
 
 class EventBus:
@@ -45,7 +50,7 @@ class EventBus:
         self._seq += 1
         event = {"seq": self._seq, "type": type_, "t": time.time(), **data}
 
-        if type_ != "status":  # status is ephemeral, not worth replaying
+        if type_ not in EPHEMERAL:
             self._replay.append(event)
 
         for q in list(self._subs):

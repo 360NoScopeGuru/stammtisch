@@ -27,78 +27,52 @@ Three things can be better, and none of them are "a bigger model":
 | Repeat-after-me | word-by-word scoring of a spoken attempt |
 | Web UI | transcript, corrections, lesson panel, drill view |
 | Session persistence | written every turn, atomically, survives a kill |
-| Homework | closed exercises marked by rules, open ones by the model |
-| `--doctor` | every precondition checked, each failure carrying its fix |
+| Homework | closed exercises marked by rules, open ones by the model; web tab; wrong answers feed the mistake history |
+| `--doctor` | every precondition checked, each failure carrying its fix — voice parts only when voice is on |
+| CI | the model-free suite on every push |
+| Text first | type or talk, either at any time; replies stream, and are read aloud or not |
+| Reading pages | PDFs and photos shown to the model: read first, answer key solved apart, then taught |
+| Class notes | what the class covered, from a note or a photo, checked, practised first |
+| Handouts | der/das/die columns by glyph position, kept only where independent readings agree |
+| Spaced repetition | SM-2 over words met, class vocabulary, handout nouns and recurring mistakes |
+| Chapter goals | can-do statements checked by a task, or marked by hand; chapter done when all are |
+| The whole course | A1–B2 joined as one; the B1 and B2 scans read by vision, by agreement |
 
 ## Next
 
-### 1. Survivable by a stranger
+### 1. Use it
 
-The gap between "my script" and "a product" is what happens in the first two
-minutes. Today: clone, run, get a traceback about a port, or silence because
-Ollama is not running, or a slow session because the laptop is on battery.
+Everything above has been tested against the real books and the real model,
+but not yet through a month of evenings. Two weeks of real use will say more
+about what to build next than any list here, and the sessions it leaves behind
+are what the memory and the flashcards run on.
 
-- **`--doctor`** — one command that checks every precondition and says what to
-  fix: LLM reachable, model pulled, Piper voices present, VAD present, CUDA
-  DLLs resolvable, a microphone that exists, free VRAM, free disk, **and mains
-  power**, which has cost more debugging time here than any bug.
-- **First-run flow** — no course ingested, no models downloaded: say so and
-  give the exact command, rather than failing later and elsewhere.
-- **Errors that name the fix.** `cannot reach http://localhost:11434` should
-  say "start Ollama with `ollama serve`".
-- **CI** — GitHub Actions running the model-free suite on every push. Eleven
-  scripts that need nothing but Python are worth running automatically.
+### 2. Things that are known to be rough
 
-### 2. Homework — next steps
+- **First reply to a page is slow** — ~20 s: reading it, then answering. The
+  read could stream, or start the moment a file is attached rather than sent.
+- **Homework questions are weak at times.** Marking is fair; the setting is
+  the model's. Seeding exercises from the workbook's own prompts, now that its
+  pages can be read, is the obvious fix.
+- **A shared misreading on a scan gets through.** Voting cannot catch a slip
+  every reading makes; the spelling pass flags some, not all. The B1 and B2
+  contents were checked by hand once; another book would need the same.
+- **End-of-chapter grammar summaries are missing for B1 and B2** — finding them
+  in a scan means looking at every page. A reading of the pages just before
+  each chapter's start would do it, now that start pages are known.
 
-The terminal flow works: set, answer, mark. What is still missing:
+### 3. Placement
 
-- **A web UI panel**, so answering is typing into boxes rather than a sequence
-  of terminal prompts. This is the part that makes it something you would
-  actually do on a laptop in the evening.
-- **Homework mistakes feeding the cross-session store**, so a fault made in
-  writing counts the same as one made out loud. Right now `progress.py` only
-  reads sessions.
-- **Seeding exercises from the workbook's own prompts**, which are real and
-  well-graded, rather than always inventing them.
+A short opening conversation that sets the level, rather than defaulting to
+the level of the chapter. Less urgent than it was: with the course ingested,
+the book the class is in says the level.
 
-### 3. Learning that actually compounds
-
-Current vocabulary review is "least recently seen", which is not spaced
-repetition, it is a queue.
-
-- **SM-2 scheduling** over the words and the recurring mistakes, so review
-  intervals grow as things stick and collapse when they do not.
-- **Chapter objectives marked complete** when demonstrated, so the book
-  actually progresses instead of the learner deciding by feel.
-- **Placement** — a short opening conversation that sets the level, rather
-  than defaulting to A1 and hoping.
-
-### 4. Your class's own vocabulary
-
-The handouts in the user's course folder list nouns in `der` / `das` / `die`
-columns — better A1 material than the textbook, because it is what the class
-is actually using.
-
-Blocked on a real problem: the column alignment is destroyed by text
-extraction, and `pypdf`'s coordinates collapse in those docx-export PDFs, so a
-row with a missing middle column cannot be read positionally. **Guessing is not
-acceptable here** — a wrong article teaches wrong German, and the learner has
-no way to know.
-
-Planned approach: take the article the column order implies, ask the model
-independently, and keep only the entries where the two agree. Everything else
-is surfaced for a human to confirm rather than silently included.
-
-### 5. Other languages
+### 4. Other languages
 
 Everything German-specific is in known places: the `langid` word lists, the
-Piper voice pair, the prompts, the CEFR descriptions. Pulling those into a
-language pack would let the same machinery teach Spanish or French from any
-ingested book.
-
-Real reach, but it helps other people rather than the person building it, so
-it sits behind the rest.
+Piper voice pair, the prompts, the CEFR descriptions, the column headings the
+book reader looks for. Pulling those into a language pack would let the same
+machinery teach Spanish or French from any ingested book.
 
 ---
 
@@ -117,6 +91,10 @@ Saying no is most of what keeps a project finishable.
   measure: whether a German recogniser heard the words you aimed at.
 - **No browser audio.** The mic and speaker stay in Python. Routing PCM over a
   WebSocket would add latency to the exact path the whole design protects.
+- **No model output trusted unchecked.** Every reading of a page — class
+  notes, handouts, the book's contents — is checked against text where there is
+  some, and against an independent reading where there is not, and refuses or
+  flags rather than guess.
 - **No model-driven control flow.** Mode switching was tried as a
   `[[PRACTICE]]` token and failed in both directions on `gemma3:12b`. Anything
   that must be reliable is a regex over the transcript or a deterministic

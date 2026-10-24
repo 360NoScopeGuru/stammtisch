@@ -17,6 +17,9 @@ class PathsCfg:
     sessions_dir: str = "./sessions"
     courses_dir: str = "./courses"
     homework_dir: str = "./homework"
+    # Class notes, review history, objective checks and vocabulary decks.
+    # Personal, like sessions/ — gitignored.
+    study_dir: str = "./study"
 
 
 @dataclass
@@ -67,6 +70,10 @@ class LlmCfg:
     num_ctx: int = 8192       # system prompt + 12 turns does not fit in 4096
     corrector_model: str = "gemma3:12b"
     corrector_temperature: float = 0.1
+    # Typed conversation is read, not sat through, so it can afford a worked
+    # example or a small table of forms. Still capped: a wall of text is no
+    # more readable than a minute of speech is listenable.
+    text_max_tokens: int = 450
 
 
 @dataclass
@@ -88,6 +95,12 @@ class TtsCfg:
 
 @dataclass
 class TutorCfg:
+    # How the learner talks to the tutor: "text" (typed, the default) or
+    # "voice" (microphone). Either can be switched on mid-session from the UI.
+    input: str = "text"
+    # Read the tutor's replies aloud. Independent of `input`: typing and
+    # hearing the German pronounced is the normal way to use it.
+    speak: bool = True
     mode: str = "mentor"      # "mentor" (teaches in English) or "practice"
     level: str = "A1"
     scenario: str = "grundlagen"
@@ -141,6 +154,15 @@ class Config:
         p = Path(self.paths.homework_dir).expanduser()
         return p if p.is_absolute() else REPO_ROOT / p
 
+    @property
+    def study_path(self) -> Path:
+        p = Path(self.paths.study_dir).expanduser()
+        return p if p.is_absolute() else REPO_ROOT / p
+
+    @property
+    def voice_input(self) -> bool:
+        return self.tutor.input == "voice"
+
 
 def _build(cls: type, raw: dict[str, Any]):
     """Instantiate a dataclass from a dict, ignoring unknown keys."""
@@ -161,4 +183,8 @@ def load_config(path: str | Path | None = None) -> Config:
         "learner": LearnerCfg,
     }
     kwargs = {name: _build(cls, raw.get(name) or {}) for name, cls in sections.items()}
-    return Config(**kwargs)
+    cfg = Config(**kwargs)
+    if cfg.tutor.input not in ("text", "voice"):
+        raise ValueError(f"tutor.input must be 'text' or 'voice', "
+                         f"not {cfg.tutor.input!r}")
+    return cfg

@@ -16,6 +16,10 @@ courses/
 homework/
 *.pdf
 
+# Class notes, uploads, reviews, handout vocabulary: personal, and the uploads
+# are pages of copyrighted books.
+study/
+
 *.log
 .env
 .idea/
