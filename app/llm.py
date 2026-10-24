@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -16,7 +16,8 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-Message = dict[str, str]
+# Content is a string, or for a vision model a list of text and image parts.
+Message = dict[str, Any]
 
 
 class LlmClient:
@@ -87,13 +88,29 @@ class LlmClient:
         except Exception as e:
             return str(e)[:120]
 
-    async def stream(self, messages: list[Message]) -> AsyncIterator[str]:
+    async def capabilities(self) -> set[str] | None:
+        """What Ollama says the model can do ({"completion", "vision"}), or
+        None from a server that does not say."""
+        base = self.cfg.llm.base_url.rstrip("/")
+        native = base[:-3] if base.endswith("/v1") else base
+        try:
+            r = await self._client.post(f"{native}/api/show",
+                                        json={"model": self.cfg.llm.model})
+            if r.status_code != 200:
+                return None
+            caps = r.json().get("capabilities")
+            return set(caps) if isinstance(caps, list) else None
+        except Exception:
+            return None
+
+    async def stream(self, messages: list[Message],
+                     max_tokens: int | None = None) -> AsyncIterator[str]:
         """Yield content deltas as they arrive."""
         payload = {
             "model": self.cfg.llm.model,
             "messages": messages,
             "temperature": self.cfg.llm.temperature,
-            "max_tokens": self.cfg.llm.max_tokens,
+            "max_tokens": max_tokens or self.cfg.llm.max_tokens,
             "stream": True,
         }
 
@@ -115,8 +132,27 @@ class LlmClient:
                 if content := delta.get("content"):
                     yield content
 
+    async def complete(self, messages: list[Message], *, max_tokens: int = 800,
+                       temperature: float = 0.0) -> str | None:
+        """Non-streaming plain text. None on failure, like complete_json."""
+        payload = {
+            "model": self.cfg.llm.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        try:
+            r = await self._client.post("/chat/completions", json=payload)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except Exception:
+            log.exception("completion failed (non-fatal)")
+            return None
+
     async def complete_json(self, messages: list[Message], *, model: str | None = None,
-                            temperature: float | None = None) -> dict | None:
+                            temperature: float | None = None,
+                            max_tokens: int | None = None) -> dict | None:
         """Non-streaming call that expects a JSON object back. Returns None on
         any failure — the correction path must never break the conversation."""
         payload = {
@@ -128,6 +164,8 @@ class LlmClient:
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
         try:
             r = await self._client.post("/chat/completions", json=payload)
             r.raise_for_status()

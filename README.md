@@ -2,9 +2,30 @@
 
 [![tests](https://github.com/360NoScopeGuru/stammtisch/actions/workflows/tests.yml/badge.svg)](https://github.com/360NoScopeGuru/stammtisch/actions/workflows/tests.yml)
 
-A local German tutor you talk to out loud. It teaches in English, practises in
-German, and reviews your mistakes afterwards. Everything runs on your own GPU —
-no API keys, no subscription, no audio leaving the machine.
+A local German tutor that follows the course you are actually taking. Type to
+it or talk to it; show it a worksheet, a photo of the board or a page of your
+book; tell it what your class did today. It teaches in English, practises in
+German, sets and marks homework, drills your vocabulary on a spaced schedule and
+remembers what you keep getting wrong. Everything runs on your own GPU — no API
+keys, no subscription, nothing leaving the machine.
+
+## Typing or talking
+
+**Text is the default.** Type in English or German and the reply streams onto
+the screen as it is written — first words in well under a second once the model
+is warm. Replies are also read aloud, German by a German voice and English by an
+English one, so you hear the pronunciation while you read; switch that off with
+🔊 in the web UI, `/speak off` in the terminal, or `--mute`.
+
+**Voice is a switch.** 🎤 in the web UI (or `--voice`, or `/voice on`) loads
+Whisper and opens the microphone mid-session; a text session never pays for
+them, so it starts in seconds and needs neither. Typing still works while voice
+is on.
+
+The prompt changes with the channel. Spoken replies are held to two sentences,
+because with barge-in off every extra sentence is silence you sit through. Typed
+replies can carry a worked example or a conjugation table, one form per line,
+and the tutor is told that «ae» for «ä» is a keyboard, not a mistake.
 
 ## Two modes
 
@@ -25,6 +46,87 @@ by `app/intents.py` reading your transcript, **not** by the model — see
 Each language gets its own Piper voice, routed per phrase. A German voice
 reading English produces gibberish, so every fragment is classified by
 `app/langid.py` and sent to the matching voice.
+
+## Showing it pages
+
+The model (gemma3:12b) reads images, so a page can simply be attached: a PDF of
+the workbook, a phone photo of a worksheet, a screenshot. 📎, drag-and-drop or
+paste in the web UI; `/attach worksheet.pdf 2-3` in the terminal.
+
+Asked to read a page and teach from it in one go, the model skims: on exercise
+15 of the course workbook it told a learner the first gap of «Wir ___ Lisa und
+Marie» was «kennen». So it is done in steps:
+
+1. **Read.** A separate call transcribes exactly the part of the page you are
+   asking about, from the page cut into two overlapping halves — gemma3 squeezes
+   any image to 896×896, and halved, the print survives. Measured against the
+   printed text of that exercise: 0.87 whole, 0.93 halved. You can open the
+   transcript under your message ("What I read on the page"), so a misreading is
+   visible instead of silently taught from.
+2. **Solve, quietly.** If the page has blanks, an answer key is worked out in a
+   call of its own (16 of 19 gaps right on that page, against none in passing),
+   while the first reply streams. It is never shown; it is how the tutor checks
+   your attempts, and it is told that a different answer that is also correct
+   German is right.
+3. **Teach.** One item at a time, a hint before an answer, and never the answer
+   to an item you have not tried.
+
+PDFs stay on disk and are read a page at a time, so a 215 MB course book is as
+quick to attach as a photo. At most six pages go with one message.
+
+## What your class did
+
+The book says what a chapter contains; it does not say where your class is in
+it. So log each class — a line of text, a photo of the board, the handout:
+
+```powershell
+python main.py --class "Kapitel 3, S. 44-47: Akkusativ, im Café bestellen" --attach board.jpg
+```
+
+(or the Class tab in the web UI). The model turns it into chapter, pages,
+topics, grammar and vocabulary, and the tutor practises that first. What you
+typed wins over what the model read: "Kapitel 3" in your note is a fact, its
+guess is not. Every word is checked against the text it came from, and one that
+appears nowhere is dropped rather than taught as your class's vocabulary. A noun's
+article gets a second, independent opinion — the model once wrote «der Brot» for
+a page that never printed it — and where the two disagree the article is removed
+rather than guessed. A photo has no text to check against; its words are marked
+unchecked, and the UI says so.
+
+## Handouts: der, das, die
+
+Class handouts list nouns in article columns. Text extraction loses the columns —
+a row with an empty middle cell comes out as `Stuhl, -e Lampe, -n`, and read by
+column order that is «das Lampe». So each noun gets up to three independent
+readings of its article: **where it sits on the page** (pypdfium2's per-character
+boxes), **the model reading the page image**, and **the model asked separately,
+without the page**. A word goes into your flashcards only when at least two exist
+and all agree; anything else waits in the Handouts tab for you to pick. On a test
+handout with gaps in the middle column all 16 nouns came out right, from the PDF
+and from a tilted, blurred photo of it.
+
+```powershell
+python main.py --handout nomen.pdf
+```
+
+## Flashcards that space themselves
+
+Words you have met, your class notes' vocabulary, confirmed handout nouns and
+the mistakes you keep making become flashcards on an SM-2 schedule — intervals
+grow when you remember and collapse when you do not, and new cards are rationed
+to ten a day. Answers are typed and marked by rules, never by the model: case,
+punctuation and «Broetchen» for «Brötchen» are forgiven; **a wrong article is
+wrong**, because that is the thing being learned. Review tab, or
+`python main.py --review`. The schedule is replayed from a log of reviews, not
+stored beside it. Words that are due are also worked into conversation.
+
+## Chapter goals
+
+Each chapter opens with its can-do statements. "Check" sets you a small task for
+one ("You are at a bakery…") and judges your answer. An answer in English fails
+without the model being asked; you can mark a goal done or undone yourself, and
+your mark wins. When every goal of a chapter is done, the tutor says so and
+offers the next one. The tutor is told which goals are still open.
 
 ## How it works
 
@@ -82,8 +184,47 @@ not catch it. `scripts/test_curriculum.py` now pins the alignment, and
 `validate()` rejects any parse whose can-do statements are not contiguous text
 on the page.
 
-Currently this understands the *Akademie Deutsch* contents layout. Other books
-will need their own parser; the failure is loud, not silent.
+### All four books, scans included
+
+The course runs over four volumes, A1 to B2, numbered straight through —
+chapters 1–9, 10–18, 19–27, 28–36. Ingest each, and they are joined into one
+course: chapter 20 is simply chapter 20, "next chapter" crosses from one book
+into the next, and the tutor teaches at the level of the book the chapter is in.
+
+```powershell
+python scripts/ingest_textbook.py "Akademie Deutsch A2+ Band 2.pdf" --level A2
+python scripts/ingest_textbook.py "Akademie Deutsch B1+ Band 3.pdf" --level B1
+```
+
+A1 and A2 are read from their text layer. **B1 and B2 are scans** — not a
+character of text on any page — so their contents pages are read by the vision
+model (`app/bookreader.py`), and held to the same standard: nothing is written
+unless independent readings agree.
+
+- The contents spread is found by classifying the first pages, and taking the
+  first chapter-list page followed directly by a syllabus page. One page's label
+  is not trusted: the model called the cover a contents page.
+- The chapter list is read twice, whole and halved, and must agree.
+- The syllabus page is the hard part. Read whole, the model drifts a row or
+  merges items; cut top and bottom, the cut goes through rows. What works is
+  cutting it **into one strip per chapter from the page's own geometry**: the
+  dotted rules between rows are the only ink that crosses the blank gutter
+  between the columns. A strip holds exactly one chapter, so nothing in it can
+  be attributed to another. The column headings are read first, so a column
+  that is not syllabus (B2's STRATEGIETRAINING) is never read as one.
+- Each row is then read twice on its own — full width, and column by column —
+  and the whole page once more. A row is kept only if two readings agree on
+  what it holds; each item is spelt as two readings agree.
+- A text-only spelling pass, which never sees the pixels and so does not share
+  their misleading shapes, flags likely misreadings for you to check.
+
+Measured on A1 and A2, whose text layers give the right answer: titles,
+sections, can-do statements and grammar match on every chapter of A1, and at
+0.98–1.0 on A2. On the scans, a few slips that every reading shared did get
+through — «Modalverbalalternativen», «GROBER» for «GROßER», «IST» for the pun
+«ISST» — so the importer prints what it is unsure of, and those were fixed by
+hand against the page. The end-of-chapter grammar summaries are not read from a
+scan.
 
 > Ingested courses land in `courses/`, which is **gitignored** — the content is
 > copyrighted and this repository is public. `*.pdf` is ignored too.
@@ -162,6 +303,12 @@ python main.py --homework do       # answer it — no mic, no models needed
 python main.py --homework          # see it again, with marks
 ```
 
+Or in the web UI's Homework tab, where you type into boxes and it is marked when
+you hand it in. Homework is set on what your class most recently covered, and a
+wrong answer to a closed exercise counts as a mistake in your history exactly
+as one made out loud does — so it comes back in conversation and as a
+flashcard.
+
 ```
   1. Fill the gap: Ich ___ Anna.
      → heiße
@@ -222,8 +369,9 @@ targeting whatever you keep getting wrong.
 
 ## Requirements
 
-- NVIDIA GPU with ~6 GB free VRAM
-- An OpenAI-compatible LLM server — Ollama, LM Studio, or `llama.cpp --server`
+- NVIDIA GPU with ~6 GB free VRAM (~8 GB with voice input on)
+- An OpenAI-compatible LLM server — Ollama, LM Studio, or `llama.cpp --server` —
+  serving a model that **reads images**. gemma3:12b does; `--doctor` checks.
 - **Mains power.** See below — this matters more than anything else here.
 
 ## Plug the laptop in
@@ -309,7 +457,8 @@ Model weights go to `D:/stammtisch-models` because C: is nearly full. Change
 
 ### Verifying without a microphone
 
-Four scripts, none of which need a microphone:
+None of these need a microphone; all but the last two need nothing at all, and
+CI runs them on every push:
 
 | Script | Covers | Needs |
 |---|---|---|
@@ -322,9 +471,14 @@ Four scripts, none of which need a microphone:
 | `test_progress.py` | cross-session memory, recurring-mistake detection | nothing |
 | `test_curriculum.py` | textbook parsing and chapter/grammar alignment | nothing |
 | `test_corrections.py` | name protection, and the corrections that must survive it | nothing |
-| `test_loop.py` | conversation loop, controls, echo drain, failure recovery | nothing |
+| `test_loop.py` | conversation loop, typed turns, attachments, goal checks | nothing |
 | `test_persistence.py` | session survives `kill -9` mid-conversation | nothing |
-| `test_web.py` | WebSocket delivery, backlog replay, controls | nothing |
+| `test_web.py` | WebSocket delivery, uploads, class notes, decks, review, homework | nothing |
+| `test_documents.py` | PDFs and photos into pages: sizes, rotation, refusals | nothing |
+| `test_handouts.py` | article columns by position, and confirming only on agreement | nothing |
+| `test_srs.py` | the SM-2 schedule, the daily ration, fair marking of answers | nothing |
+| `test_classlog.py` | class notes: the learner's word wins, invented words go | nothing |
+| `test_bookreader.py` | rows from page geometry, agreement and voting between readings | nothing |
 | `test_doctor.py` | the diagnostics, against deliberately broken configs | nothing |
 | `test_pipeline.py` | Piper → VAD → Whisper round trip, both voices | models |
 | `test_prompt.py` | whether the live model obeys the prompt contract | LLM |
@@ -342,8 +496,14 @@ these will sound broken in ways that are hard to trace back from audio.
 ## Run
 
 ```powershell
-python main.py                                  # terminal, mentor mode, A1
-python main.py --web                            # browser UI at :8420
+python main.py --web                            # browser UI at :8420 — start here
+python main.py                                  # type to it in the terminal
+python main.py --voice                          # talk instead
+python main.py --mute                           # do not read replies aloud
+python main.py --class "Kapitel 3, S. 44" --attach board.jpg
+python main.py --handout nomen.pdf              # der/das/die vocabulary
+python main.py --review                         # flashcards that are due
+python main.py --goals                          # this chapter's goals
 python main.py --mode practice --level A2       # skip straight to German
 python main.py --chapter 3                      # chapter 3 of your textbook
 python main.py --list-chapters
@@ -358,7 +518,9 @@ python main.py --list-devices                   # if the wrong mic is picked up
 Ollama (or whichever server you configured) must be running first, or startup
 fails at preflight with `cannot reach http://localhost:11434/v1`.
 
-Talk. Stop talking. It replies. `Ctrl+C` ends the session and prints your review.
+Type, or with `--voice` talk, and it replies. In the terminal, `/help` lists
+the commands (`/attach`, `/check 2`, `/next`, `/voice on`, …). `Ctrl+C` or
+`/quit` ends the session and prints your review.
 
 Sessions are written to `sessions/` as JSON plus an Anki-importable CSV, **after
 every turn**. This used to happen only on a clean shutdown, which meant it never
@@ -369,7 +531,9 @@ mid-write cannot leave a half-parsed session behind.
 
 ## The web UI
 
-`python main.py --web` serves a transcript view at http://127.0.0.1:8420.
+`python main.py --web` serves the app at http://127.0.0.1:8420: a conversation
+with a typing box, and tabs for the lesson and its goals, flashcard review,
+homework, class notes and handouts.
 
 **Audio never touches the browser.** The mic and speaker stay in Python; the
 page is a view over an event stream and a set of controls. Routing PCM through
@@ -385,7 +549,10 @@ What it gives you over the terminal:
 - A running vocabulary list and session stats.
 - The current chapter's grammar and objectives, and a chapter switcher.
 - Your recurring mistakes across every past session.
-- **Say it back**: drill the tutor's last German phrase, scored word by word.
+- **Say it back** (with voice on): drill the tutor's last German phrase, scored
+  word by word.
+- Homework you answer in boxes, marked on the spot; flashcards; class notes and
+  handouts, each with what was read off the page shown for you to check.
 - Level and scenario switching mid-session. Changing scenario clears history and
   speaks the new opener; changing level keeps the conversation and just shifts
   register.
@@ -403,6 +570,9 @@ The knobs that actually matter, in `config.yaml`:
 | `vad.threshold` | Raise toward 0.7 in a noisy room. |
 | `tts.length_scale` | 1.15–1.3 makes the tutor speak slower. Good at A1/A2. |
 | `tutor.mode` | `mentor` teaches in English; `practice` is German immersion. |
+| `tutor.input` | `text` (default) or `voice`. Either can be switched mid-session. |
+| `tutor.speak` | Read replies aloud. Independent of how you talk to it. |
+| `llm.text_max_tokens` | Room for a typed reply — 450, enough for a small table of forms. |
 | `tts.voices` | One Piper voice per language. Swap `en` for `en_GB-alba-medium` if you prefer British English. |
 | `llm.max_tokens` | Keep it low. Long tutor turns kill conversation flow. |
 | `stt.model` | Drop to `distil-large-v3` or `medium` if VRAM gets tight. |
@@ -597,6 +767,13 @@ See [ROADMAP.md](ROADMAP.md) — what is planned, and what this deliberately
 will not become (no cloud, no accounts, no torch, no shipped textbooks).
 
 ## Known limits
+
+- **Reading pages is good, not perfect.** A focused transcription of a workbook
+  exercise is ~93% character-accurate; that is why you are shown what was read,
+  and why answers are checked against a key solved separately rather than on the
+  fly. Reading a page takes a few seconds, and the first reply to a page ~20 s.
+- **Homework questions are written by the model**, and some are weak — a colour
+  question that answers itself. The marking is fair; the setting is gemma3's.
 
 - **No pronunciation scoring.** Whisper returns text, not phonemes, so the app
   can tell you *what* it heard but not how close your vowels were. Real scoring

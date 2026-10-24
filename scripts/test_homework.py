@@ -53,6 +53,9 @@ def main() -> int:
     check("exact answer", e.check("heiße")[0], True)
     check("case and spacing ignored", e.check("  Heiße  ")[0], True)
     check("umlaut spelling is not the test", e.check("heisse")[0], True)
+    roll = Exercise(kind=CLOSED, prompt="Ich hätte gern ein ___.", answer="Brötchen")
+    check("oe for ö is not the test either", roll.check("Broetchen")[0], True)
+    check("nor a plain o", roll.check("Brotchen")[0], True)
     check("an alternative counts",
           gap(alts=["heisse"]).check("heisse")[0], True)
     # The two that were marked wrong before, and should not have been.

@@ -47,6 +47,7 @@ class Chapter:
     grammar: list[str] = field(default_factory=list)
     reference: str = ""
     book_page: int | None = None
+    level: str = ""               # the volume's level, e.g. "B1"
 
     @property
     def key(self) -> str:
@@ -89,7 +90,10 @@ class Course:
         return self.chapters[0] if self.chapters else None
 
     def next_after(self, number: int) -> Chapter | None:
-        return self.get(number + 1)
+        """The next chapter in the book — not number + 1, which a course
+        joined from volumes with a gap in their numbering would not have."""
+        return next((c for c in sorted(self.chapters, key=lambda c: c.number)
+                     if c.number > number), None)
 
     def listing(self) -> str:
         return "\n".join(
@@ -192,16 +196,61 @@ def _chapter_from_dict(d: dict) -> Chapter:
 
 def load(path: Path) -> Course:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    level = str(raw.get("level", "A1"))
+    chapters = [_chapter_from_dict(c) for c in raw.get("chapters", [])]
+    for c in chapters:
+        c.level = level
     return Course(
         title=str(raw.get("title", path.stem)),
-        level=str(raw.get("level", "A1")),
+        level=level,
         source=str(raw.get("source", "")),
-        chapters=[_chapter_from_dict(c) for c in raw.get("chapters", [])],
+        chapters=chapters,
     )
 
 
+def join(courses: list[Course]) -> Course | None:
+    """Volumes of one course as a single course, or None if they overlap.
+
+    The learner's course runs over four books whose chapters are numbered
+    straight through — 1-9, 10-18, 19-27, 28-36. Joined, "chapter 20" is
+    simply chapter 20, and resuming, class notes and "next chapter" carry on
+    from one book into the next. Books whose chapter numbers collide are
+    different courses, not volumes of one, and are not joined.
+    """
+    numbers = [c.number for course in courses for c in course.chapters]
+    if len(numbers) != len(set(numbers)):
+        return None
+    ordered = sorted(courses, key=lambda c: min((x.number for x in c.chapters),
+                                                default=0))
+    if len(ordered) == 1:
+        return ordered[0]
+    levels = [c.level for c in ordered]
+    return Course(
+        title=f"{_common_title([c.title for c in ordered])} "
+              f"{levels[0]}–{levels[-1]}".strip(),
+        level=levels[0],
+        chapters=sorted((ch for c in ordered for ch in c.chapters),
+                        key=lambda ch: ch.number),
+        source=", ".join(c.source for c in ordered if c.source),
+    )
+
+
+def _common_title(titles: list[str]) -> str:
+    prefix = titles[0]
+    for t in titles[1:]:
+        while not t.startswith(prefix):
+            prefix = prefix[:-1]
+    # "Akademie Deutsch A1+_ Band 1" and "... A2+_ Band 2" share
+    # "Akademie Deutsch A" — cut back to a whole word.
+    return prefix.rsplit(" ", 1)[0] if " " in prefix else prefix
+
+
 def find(courses_dir: Path, name: str = "") -> Course | None:
-    """Load a course by file stem, or the only one present if unnamed."""
+    """Load a course by file stem, or everything present if unnamed.
+
+    Unnamed, several files that are volumes of one course are joined; if
+    they cannot be (their chapters overlap), the first is used.
+    """
     courses_dir = Path(courses_dir)
     if not courses_dir.is_dir():
         return None
@@ -218,5 +267,9 @@ def find(courses_dir: Path, name: str = "") -> Course | None:
         return None
 
     if len(files) > 1:
-        log.info("several courses present, using %s", files[0].name)
+        joined = join([load(f) for f in files])
+        if joined is not None:
+            return joined
+        log.info("several courses whose chapters overlap; using %s — set "
+                 "tutor.course to choose", files[0].name)
     return load(files[0])

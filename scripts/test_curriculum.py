@@ -154,6 +154,37 @@ def main() -> int:
     check("next after", course.next_after(1).number, 2)
     check("next after the last is None", course.next_after(3), None)
 
+    print("\nVolumes of one course:")
+    import json
+    import tempfile
+    from pathlib import Path
+
+    def vol(title, level, numbers):
+        return {"title": title, "level": level,
+                "chapters": [{"number": n, "title": f"K{n}"} for n in numbers]}
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "b-a2.json").write_text(json.dumps(vol(
+            "Akademie Deutsch A2+_ Band 2", "A2", [10, 11])), encoding="utf-8")
+        (d / "a-a1.json").write_text(json.dumps(vol(
+            "Akademie Deutsch A1+_ Band 1", "A1", [1, 2])), encoding="utf-8")
+        joined = curriculum.find(d)
+        check("volumes are joined into one course",
+              [c.number for c in joined.chapters], [1, 2, 10, 11])
+        check("next chapter crosses into the next book",
+              joined.next_after(2) and joined.next_after(2).number, 10)
+        check("each chapter keeps its book's level",
+              (joined.get(1).level, joined.get(10).level), ("A1", "A2"))
+        check("the joined title names the span",
+              joined.title, "Akademie Deutsch A1–A2")
+        check("a single volume can still be chosen by name",
+              [c.number for c in curriculum.find(d, "b-a2").chapters], [10, 11])
+        (d / "c-other.json").write_text(json.dumps(vol(
+            "Another book", "A1", [1, 2, 3])), encoding="utf-8")
+        check("books whose chapters collide are not joined",
+              [c.number for c in curriculum.find(d).chapters], [1, 2])
+
     print(f"\n{'PASS' if not fails else 'FAIL'} — curriculum\n")
     return 1 if fails else 0
 

@@ -41,6 +41,11 @@ CLOSED, OPEN = "closed", "open"
 # A closed answer is marked right if it matches after this much forgiveness.
 # Case, spacing, punctuation and umlaut spelling are not what is being tested.
 _FOLD = str.maketrans({"ß": "ss", "ä": "a", "ö": "o", "ü": "u"})
+# The other way of typing German without a German keyboard: «Broetchen».
+# Applied to the expected answer only — folding "oe" in what the learner
+# wrote would also fold «Poet» into «Pot».
+_TRANSLIT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue",
+                           "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})
 
 
 def normalise(text: str) -> str:
@@ -83,7 +88,10 @@ class Exercise:
         if not given.strip():
             return False, "left blank"
 
-        want = [normalise(w) for w in (self.answer, *self.alternatives) if w]
+        keys = [w for w in (self.answer, *self.alternatives) if w]
+        want = list(dict.fromkeys(
+            [normalise(w) for w in keys]
+            + [normalise(w.translate(_TRANSLIT)) for w in keys]))
         got = normalise(given)
 
         if got in want:

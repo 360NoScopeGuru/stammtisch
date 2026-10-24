@@ -1,4 +1,4 @@
-# The eleven test scripts that need nothing but Python.
+# The test scripts that need nothing but Python.
 #
 # Everything requiring a GPU, a microphone, model weights or a running LLM
 # stays out: test_pipeline.py and test_prompt.py are for a real machine, and a
@@ -26,14 +26,17 @@ jobs:
       # faster-whisper, none of which these tests touch and all of which take
       # minutes. The scripts below import only the pure-Python layers.
       - name: Install what the model-free tests actually need
-        run: pip install pyyaml numpy pypdf
+        # pypdfium2 and Pillow are plain wheels: page rendering, glyph
+        # positions and photo handling are all testable without a model.
+        run: pip install pyyaml numpy pypdf pypdfium2 pillow
 
       - name: Run the model-free suite
         run: |
           set -e
           for t in test_sentences test_segments test_langid test_intents \
                    test_corrections test_curriculum test_progress test_drills \
-                   test_homework test_persistence; do
+                   test_homework test_persistence test_documents \
+                   test_handouts test_srs test_classlog test_bookreader; do
             echo "::group::$t"
             python "scripts/$t.py"
             echo "::endgroup::"

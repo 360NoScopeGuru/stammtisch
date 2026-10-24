@@ -51,10 +51,23 @@ def main() -> int:
         # individually, not as one vague "models missing".
         (Path(td) / "empty").mkdir()
         cfg.paths.models_root = str(Path(td) / "empty")
+        cfg.tutor.input = "voice"
         results = doctor.check_models(cfg)
         vad = find(results, "Silero")
-        check("an empty directory still fails the VAD",
+        check("with voice input on, an empty directory fails the VAD",
               vad is not None and vad.status == doctor.FAIL)
+        # Text is the default. A typed session does not need the VAD, and
+        # calling it broken would send a new user off fixing nothing.
+        cfg.tutor.input = "text"
+        vad = find(doctor.check_models(cfg), "Silero")
+        check("in a text session a missing VAD only warns",
+              vad is not None and vad.status == doctor.WARN
+              and "voice" in vad.detail, f"{vad.status if vad else None}")
+        cfg.tutor.speak = False
+        quiet = [c for c in doctor.check_models(cfg) if c.name.startswith("Piper")]
+        check("with reading aloud off, missing voices only warn",
+              quiet and all(c.status == doctor.WARN for c in quiet))
+        cfg.tutor.speak = True
         voices = [c for c in results if c.name.startswith("Piper voice")]
         check("every configured voice is checked separately",
               len(voices) == len(cfg.tts.voices) and
@@ -89,6 +102,17 @@ def main() -> int:
               f"fix={c.fix if c else None!r}")
         corrector = find(results, "model (corrector)")
         check("the corrector model is checked too", corrector is not None)
+
+    print("\naudio only when it is used:")
+    cfg = load_config()
+    cfg.tutor.input, cfg.tutor.speak = "text", False
+    c = doctor.check_audio(cfg)
+    check("text in, text out does not touch audio at all",
+          len(c) == 1 and c[0].status == doctor.OK, f"{c}")
+    pk = doctor.check_packages(cfg)
+    check("voice-only packages are not required for text",
+          all(x.status != doctor.FAIL for x in pk
+              if "faster_whisper" in x.name or "piper" in x.name))
 
     print("\nCUDA libraries:")
     cfg = load_config()

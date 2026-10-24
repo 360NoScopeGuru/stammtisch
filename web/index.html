@@ -10,6 +10,7 @@
     --muted: #6b6b66;   --line: #e2e2dd;     --accent: #b4581e;
     --user-bg: #e8e6e0; --tutor-bg: #fff;
     --good: #2f7d4f;    --bad: #b03636;      --chip: #efeee9;
+    --warn: #9a6a00;
     --radius: 12px;
   }
   @media (prefers-color-scheme: dark) {
@@ -18,6 +19,7 @@
       --muted: #97978f; --line: #2e2e35;     --accent: #e8925a;
       --user-bg: #272730; --tutor-bg: #1e1e23;
       --good: #6fcf97;  --bad: #f08585;      --chip: #2a2a31;
+      --warn: #e0b452;
     }
   }
   * { box-sizing: border-box; }
@@ -26,30 +28,36 @@
     font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
     height: 100vh; display: flex; flex-direction: column;
   }
+  button, input, select, textarea { font: inherit; color: inherit; }
 
   header {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    padding: 12px 20px; background: var(--panel);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 18px; background: var(--panel);
     border-bottom: 1px solid var(--line);
   }
   .brand { font-weight: 650; letter-spacing: -.01em; margin-right: 4px; }
   .brand span { color: var(--accent); }
   select {
-    font: inherit; font-size: 13px; padding: 5px 9px; color: var(--ink);
-    background: var(--bg); border: 1px solid var(--line);
-    border-radius: 8px; cursor: pointer;
+    font-size: 13px; padding: 5px 9px; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+    max-width: 230px;
   }
   label.ctl { font-size: 12px; color: var(--muted); display: flex;
               align-items: center; gap: 6px; }
 
-  .modes { display: flex; border: 1px solid var(--line); border-radius: 8px;
-           overflow: hidden; }
-  .modes button {
-    font: inherit; font-size: 12.5px; font-weight: 550; padding: 5px 13px;
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px;
+         overflow: hidden; }
+  .seg button {
+    font-size: 12.5px; font-weight: 550; padding: 5px 12px;
     border: 0; background: var(--bg); color: var(--muted); cursor: pointer;
   }
-  .modes button + button { border-left: 1px solid var(--line); }
-  .modes button.on { background: var(--accent); color: #fff; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent); color: #fff; }
+
+  .toggle { font-size: 12.5px; font-weight: 550; padding: 5px 11px;
+            border: 1px solid var(--line); border-radius: 8px;
+            background: var(--bg); color: var(--muted); cursor: pointer; }
+  .toggle.on { border-color: var(--accent); color: var(--accent); }
 
   .pill {
     margin-left: auto; display: flex; align-items: center; gap: 8px;
@@ -63,24 +71,28 @@
   .pill[data-s="thinking"]  { color: var(--accent); }
   .pill[data-s="thinking"] .dot { animation: pulse .7s ease-in-out infinite; }
   .pill[data-s="speaking"]  { color: var(--accent); }
+  .pill[data-s="ready"]     { color: var(--good); }
   .pill[data-s="offline"]   { color: var(--bad); }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
 
-  main { flex: 1; display: grid; grid-template-columns: 1fr 340px;
+  main { flex: 1; display: grid; grid-template-columns: 1fr 380px;
          min-height: 0; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; }
                               aside { display: none; } }
 
-  #chat { overflow-y: auto; padding: 22px 24px 40px; }
-  .turn { max-width: 640px; margin: 0 auto 14px; display: flex; }
+  .convo { display: flex; flex-direction: column; min-height: 0; }
+  #chat { flex: 1; overflow-y: auto; padding: 22px 24px 30px; }
+  .turn { max-width: 680px; margin: 0 auto 14px; display: flex; }
   .turn.user { justify-content: flex-end; }
   .bubble {
     padding: 9px 14px; border-radius: var(--radius);
     border: 1px solid var(--line); background: var(--tutor-bg);
-    max-width: 78%; white-space: pre-wrap; word-wrap: break-word;
+    max-width: 82%; white-space: pre-wrap; word-wrap: break-word;
     animation: rise .18s ease-out;
   }
   .turn.user .bubble { background: var(--user-bg); border-color: transparent; }
+  .bubble.live::after { content: '▍'; color: var(--accent);
+                        animation: pulse .9s infinite; }
   @keyframes rise { from { opacity: 0; transform: translateY(4px) } }
   .meta { font-size: 11px; color: var(--muted); margin-top: 4px;
           font-variant-numeric: tabular-nums; }
@@ -88,6 +100,13 @@
   .fix { font-size: 12.5px; margin-top: 6px; padding-top: 6px;
          border-top: 1px dashed var(--line); color: var(--muted); }
   .fix b { color: var(--good); font-weight: 550; }
+  details.read { font-size: 12.5px; margin-top: 6px; color: var(--muted);
+                 border-top: 1px dashed var(--line); padding-top: 5px; }
+  details.read summary { cursor: pointer; }
+  details.read div { margin-top: 4px; max-height: 240px; overflow-y: auto; }
+  .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .thumbs img { height: 92px; border-radius: 6px; border: 1px solid var(--line);
+                background: #fff; cursor: zoom-in; }
   .sys { text-align: center; font-size: 12px; color: var(--muted);
          margin: 18px auto; max-width: 640px; }
   .sys.err { color: var(--bad); }
@@ -97,14 +116,57 @@
     content: ''; display: inline-block; width: 40px; height: 1px;
     background: var(--line); vertical-align: middle; margin: 0 10px;
   }
-  /* German inside an English explanation */
   .de { color: var(--accent); font-weight: 560; }
 
+  /* ---- composer ---- */
+  .composer { border-top: 1px solid var(--line); background: var(--panel);
+              padding: 10px 18px 14px; }
+  .composer .inner { max-width: 720px; margin: 0 auto; }
+  .attach-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .att { display: flex; align-items: center; gap: 6px; background: var(--chip);
+         border-radius: 8px; padding: 3px 4px 3px 9px; font-size: 12.5px; }
+  .att input { width: 74px; font-size: 12px; padding: 2px 6px; border-radius: 6px;
+               border: 1px solid var(--line); background: var(--panel); }
+  .att button { border: 0; background: none; cursor: pointer; color: var(--muted);
+                padding: 0 4px; font-size: 14px; }
+  .compose { display: flex; gap: 8px; align-items: flex-end; }
+  .compose textarea {
+    flex: 1; resize: none; min-height: 42px; max-height: 180px;
+    padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); line-height: 1.45;
+  }
+  .compose textarea:focus { outline: none; border-color: var(--accent); }
+  .compose.drag textarea { border-style: dashed; border-color: var(--accent); }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+  .hint kbd { font: inherit; background: var(--chip); padding: 0 4px;
+              border-radius: 4px; }
+
+  button.act, button.primary {
+    font-size: 12.5px; font-weight: 550; padding: 6px 12px;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); cursor: pointer; white-space: nowrap;
+  }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .compose button { height: 42px; }
+
+  /* ---- sidebar ---- */
   aside { border-left: 1px solid var(--line); background: var(--panel);
-          overflow-y: auto; padding: 18px; }
+          display: flex; flex-direction: column; min-height: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .tabs button { flex: 1; border: 0; background: none; padding: 10px 6px;
+                 font-size: 12.5px; font-weight: 550; color: var(--muted);
+                 cursor: pointer; border-bottom: 2px solid transparent;
+                 white-space: nowrap; }
+  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs .badge { background: var(--accent); color: #fff; border-radius: 999px;
+                 font-size: 10.5px; padding: 0 6px; margin-left: 4px; }
+  .pane { display: none; overflow-y: auto; padding: 16px 18px 30px; flex: 1; }
+  .pane.on { display: block; }
   aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
              color: var(--muted); margin: 0 0 10px; font-weight: 600; }
-  aside section { margin-bottom: 26px; }
+  aside section { margin-bottom: 24px; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .stat { background: var(--bg); border: 1px solid var(--line);
           border-radius: 10px; padding: 9px 11px; }
@@ -122,69 +184,94 @@
   .chip { background: var(--chip); border-radius: 6px; padding: 3px 8px;
           font-size: 12.5px; }
   .empty { font-size: 12.5px; color: var(--muted); font-style: italic; }
+  .small { font-size: 12.5px; color: var(--muted); }
+  .card { background: var(--bg); border: 1px solid var(--line);
+          border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+
+  .goal { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0;
+          border-bottom: 1px solid var(--line); font-size: 13px; }
+  .goal:last-child { border-bottom: 0; }
+  .goal .mark { width: 18px; flex: none; text-align: center; font-weight: 700; }
+  .goal.done .mark { color: var(--good); }
+  .goal .txt { flex: 1; }
+  .goal .note { font-size: 11.5px; color: var(--muted); }
+  .goal button { font-size: 11.5px; padding: 3px 8px; }
+
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+  .field textarea, .field input[type=text], .field input[type=date],
+  .review input {
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); width: 100%;
+  }
+  .field textarea { min-height: 70px; resize: vertical; }
+
+  .review .front { font-size: 18px; font-weight: 560; margin: 6px 0 10px; }
+  .review .kind { font-size: 11px; text-transform: uppercase; color: var(--muted);
+                  letter-spacing: .06em; }
+  .verdict { margin-top: 8px; font-size: 13.5px; }
+  .verdict.ok { color: var(--good); } .verdict.no { color: var(--bad); }
+
+  .ex { margin-bottom: 12px; font-size: 13.5px; }
+  .ex .p { margin-bottom: 4px; }
+  .ex input { width: 100%; padding: 6px 9px; border-radius: 7px;
+              border: 1px solid var(--line); background: var(--bg); }
+  .ex .res { font-size: 12.5px; margin-top: 3px; }
+  .ex .res.ok { color: var(--good); } .ex .res.no { color: var(--bad); }
+
+  .entry { font-size: 13px; }
+  .entry .w { display: flex; justify-content: space-between; gap: 6px;
+              padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .entry .w span.r { font-size: 11px; color: var(--muted); }
+  .warn { color: var(--warn); }
 
   /* ---- repeat-after-me ---- */
-  button.act {
-    font: inherit; font-size: 12.5px; font-weight: 550; padding: 5px 12px;
-    border: 1px solid var(--line); border-radius: 8px;
-    background: var(--bg); color: var(--ink); cursor: pointer;
-  }
-  button.act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  button.act:disabled { opacity: .4; cursor: default; }
-
   #drill { display: none; padding: 12px 20px; background: var(--panel);
            border-bottom: 1px solid var(--line); }
   #drill.on { display: block; }
   #drill .lbl { font-size: 10.5px; text-transform: uppercase; font-weight: 600;
                 letter-spacing: .07em; color: var(--accent); margin-bottom: 5px; }
-  #drill .target { font-size: 19px; font-weight: 560; color: var(--ink); }
-  #drill .hint { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  #drill .target { font-size: 19px; font-weight: 560; }
   #drill .row { display: flex; align-items: center; gap: 12px;
-                max-width: 640px; margin: 0 auto; }
+                max-width: 680px; margin: 0 auto; }
   #drill .row > div:first-child { flex: 1; min-width: 0; }
-
-  /* Per-word verdict. Colour alone never carries it — the underline and the
-     strike do, so this still reads without colour vision. */
-  .attempt { max-width: 640px; margin: 0 auto 14px; font-size: 16px;
+  .attempt { max-width: 680px; margin: 0 auto 14px; font-size: 16px;
              display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; }
-  .w { padding: 1px 2px; }
   .w.correct { color: var(--good); }
   .w.close   { color: var(--good); text-decoration: underline dotted; }
   .w.wrong   { color: var(--bad); text-decoration: underline wavy; }
   .w.missing { color: var(--bad); text-decoration: line-through; opacity: .75; }
   .w.extra   { color: var(--muted); font-style: italic; }
-  .score { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
-           margin-left: auto; white-space: nowrap; }
+  .score { font-size: 12px; color: var(--muted); margin-left: auto; white-space: nowrap; }
 
   .mistake { border-left: 2px solid var(--accent); padding: 2px 0 2px 10px;
              margin-bottom: 11px; font-size: 13px; }
-  .mistake .p { font-weight: 550; }
   .mistake .p .a { color: var(--bad); text-decoration: line-through; }
   .mistake .p .b { color: var(--good); }
   .mistake .n { font-size: 11.5px; color: var(--muted); }
+
+  #zoom { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: none;
+          align-items: center; justify-content: center; z-index: 10; cursor: zoom-out; }
+  #zoom.on { display: flex; }
+  #zoom img { max-width: 94vw; max-height: 94vh; background: #fff; }
 </style>
 </head>
 <body>
 
 <header>
   <div class="brand">Stamm<span>tisch</span></div>
-  <div class="modes" id="modes">
+  <div class="seg" id="modes">
     <button data-m="mentor" class="on">Teach me</button><button data-m="practice">Practise</button>
   </div>
-  <label class="ctl" id="chapterCtl" hidden>Chapter
-    <select id="chapter"></select>
-  </label>
-  <label class="ctl">Topic
-    <select id="scenario"></select>
-  </label>
-  <button class="act" id="sayBack" disabled title="Say the last German phrase back">Say it back</button>
+  <label class="ctl" id="chapterCtl" hidden>Chapter <select id="chapter"></select></label>
+  <label class="ctl">Topic <select id="scenario"></select></label>
   <label class="ctl">Level
-    <select id="level">
-      <option>A1</option><option>A2</option><option>B1</option>
-      <option>B2</option><option>C1</option>
-    </select>
+    <select id="level"><option>A1</option><option>A2</option><option>B1</option>
+      <option>B2</option><option>C1</option></select>
   </label>
-  <div class="pill" id="pill" data-s="offline"><i class="dot"></i><span id="pillText">verbinde…</span></div>
+  <button class="toggle" id="speakBtn" title="Read the tutor's replies aloud">🔊 Read aloud</button>
+  <button class="toggle" id="micBtn" title="Talk instead of typing (loads speech recognition)">🎤 Voice</button>
+  <button class="act" id="sayBack" hidden disabled title="Say the last German phrase back">Say it back</button>
+  <div class="pill" id="pill" data-s="offline"><i class="dot"></i><span id="pillText">connecting…</span></div>
 </header>
 
 <div id="drill">
@@ -192,109 +279,238 @@
     <div>
       <div class="lbl">Say this after me</div>
       <div class="target" id="drillTarget"></div>
-      <div class="hint" id="drillHint">Listening…</div>
+      <div class="small" id="drillHint">Listening…</div>
     </div>
     <button class="act" id="drillStop">Skip</button>
   </div>
 </div>
 
 <main>
-  <div id="chat"></div>
+  <div class="convo">
+    <div id="chat"></div>
+    <div class="composer">
+      <div class="inner">
+        <div class="attach-row" id="pending"></div>
+        <div class="compose" id="compose">
+          <button class="act" id="attachBtn" title="Attach a PDF or a photo">📎</button>
+          <input type="file" id="file" accept=".pdf,image/*" multiple hidden>
+          <textarea id="msg" rows="1" placeholder="Type in English or German…"></textarea>
+          <button class="primary" id="send">Send</button>
+          <button class="act" id="stop" hidden>Stop</button>
+        </div>
+        <div class="hint"><kbd>Enter</kbd> sends · <kbd>Shift+Enter</kbd> new line ·
+          drop or paste a page or photo to ask about it</div>
+      </div>
+    </div>
+  </div>
+
   <aside>
-    <section>
-      <h2>Sitzung</h2>
-      <div class="stats">
-        <div class="stat"><div class="n" id="sTurns">0</div><div class="l">Beiträge</div></div>
-        <div class="stat"><div class="n" id="sFix">0</div><div class="l">Korrekturen</div></div>
-        <div class="stat"><div class="n" id="sLat">–</div><div class="l">Ø Antwort</div></div>
-        <div class="stat"><div class="n" id="sMin">0</div><div class="l">Minuten</div></div>
-      </div>
-    </section>
-    <section>
-      <h2>Korrekturen</h2>
-      <div id="fixes"><p class="empty">Noch keine Fehler.</p></div>
-    </section>
-    <section>
-      <h2>Wortschatz</h2>
-      <div class="chips" id="vocab"></div>
-    </section>
-    <section id="lessonBox" hidden>
-      <h2>Lektion</h2>
-      <div id="lesson"></div>
-    </section>
-    <section id="histBox" hidden>
-      <h2>Bisher</h2>
-      <div class="stats" style="margin-bottom:12px">
-        <div class="stat"><div class="n" id="pSess">0</div><div class="l">Sitzungen</div></div>
-        <div class="stat"><div class="n" id="pWords">0</div><div class="l">Wörter</div></div>
-      </div>
-      <div id="habits"></div>
-    </section>
+    <div class="tabs" id="tabs">
+      <button data-t="lesson" class="on">Lesson</button>
+      <button data-t="review">Review<span class="badge" id="dueBadge" hidden></span></button>
+      <button data-t="homework">Homework</button>
+      <button data-t="class">Class</button>
+      <button data-t="handouts">Handouts</button>
+      <button data-t="session">Session</button>
+    </div>
+
+    <!-- Lesson: the chapter, its goals, and the latest class -->
+    <div class="pane on" id="pane-lesson">
+      <section id="lessonBox" hidden>
+        <h2>Chapter</h2>
+        <div id="lesson"></div>
+      </section>
+      <section id="goalsBox" hidden>
+        <h2>Goals</h2>
+        <div id="goals"></div>
+        <p class="small" style="margin-top:8px">“Check” sets you a small task for
+          that goal. Your next message is the answer.</p>
+        <div id="chapterDone" hidden class="card">
+          <b>Every goal in this chapter is done.</b>
+          <div style="margin-top:8px"><button class="primary" id="nextChapter">Next chapter</button></div>
+        </div>
+      </section>
+      <section>
+        <h2>Latest class</h2>
+        <div id="latestClass"><p class="empty">No class logged yet — see the Class tab.</p></div>
+      </section>
+    </div>
+
+    <!-- Review: spaced repetition -->
+    <div class="pane" id="pane-review">
+      <section>
+        <h2>Flashcards</h2>
+        <div class="stats" style="margin-bottom:12px">
+          <div class="stat"><div class="n" id="rDue">0</div><div class="l">due</div></div>
+          <div class="stat"><div class="n" id="rNew">0</div><div class="l">new today</div></div>
+        </div>
+        <div class="card review" id="reviewCard"><p class="empty">Loading…</p></div>
+        <p class="small">Cards come from words you have met, your class notes,
+          confirmed handout words and mistakes you keep making. Type the German;
+          nouns need their article.</p>
+      </section>
+    </div>
+
+    <!-- Homework -->
+    <div class="pane" id="pane-homework">
+      <section>
+        <h2>Homework</h2>
+        <div id="hw"><p class="empty">Loading…</p></div>
+        <button class="act" id="hwNew">Set new homework</button>
+      </section>
+    </div>
+
+    <!-- Class: what the class covered -->
+    <div class="pane" id="pane-class">
+      <section>
+        <h2>Log a class</h2>
+        <div class="field">
+          <textarea id="classNote" placeholder="What did you do? e.g. Kapitel 3, pages 44-47: ordering in a café, Akkusativ with einen/eine"></textarea>
+        </div>
+        <div class="attach-row" id="classAtt"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+          <button class="act" id="classAttach">📎 Add photo or page</button>
+          <input type="date" id="classDay" style="padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg)">
+          <button class="primary" id="classSave" style="margin-left:auto">Save</button>
+        </div>
+        <p class="small">A photo of the board, the handout or the page you worked on.
+          The tutor practises what your class did first.</p>
+      </section>
+      <section>
+        <h2>Recent classes</h2>
+        <div id="classes"></div>
+      </section>
+    </div>
+
+    <!-- Handouts: der/das/die vocabulary -->
+    <div class="pane" id="pane-handouts">
+      <section>
+        <h2>Read a handout</h2>
+        <div class="attach-row" id="hoAtt"></div>
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <button class="act" id="hoAttach">📎 Choose handout</button>
+          <button class="primary" id="hoRead" style="margin-left:auto">Read nouns</button>
+        </div>
+        <p class="small">Nouns in der/das/die columns. Each article is read from
+          the page and checked separately; only words where the readings agree go
+          straight into your flashcards. The rest wait here for you.</p>
+      </section>
+      <section>
+        <h2>Decks</h2>
+        <div id="decks"><p class="empty">No handouts read yet.</p></div>
+        <div id="deckView"></div>
+      </section>
+    </div>
+
+    <!-- Session -->
+    <div class="pane" id="pane-session">
+      <section>
+        <h2>This session</h2>
+        <div class="stats">
+          <div class="stat"><div class="n" id="sTurns">0</div><div class="l">messages</div></div>
+          <div class="stat"><div class="n" id="sFix">0</div><div class="l">corrections</div></div>
+          <div class="stat"><div class="n" id="sLat">–</div><div class="l">first word</div></div>
+          <div class="stat"><div class="n" id="sMin">0</div><div class="l">minutes</div></div>
+        </div>
+      </section>
+      <section>
+        <h2>Corrections</h2>
+        <div id="fixes"><p class="empty">No mistakes yet.</p></div>
+      </section>
+      <section>
+        <h2>Vocabulary</h2>
+        <div class="chips" id="vocab"></div>
+      </section>
+      <section id="histBox" hidden>
+        <h2>So far</h2>
+        <div class="stats" style="margin-bottom:12px">
+          <div class="stat"><div class="n" id="pSess">0</div><div class="l">sessions</div></div>
+          <div class="stat"><div class="n" id="pWords">0</div><div class="l">words</div></div>
+        </div>
+        <div id="habits"></div>
+      </section>
+    </div>
   </aside>
 </main>
 
+<div id="zoom"><img alt=""></div>
+
 <script>
 const $ = s => document.querySelector(s);
-const chat = $('#chat'), fixes = $('#fixes'), vocabBox = $('#vocab');
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const chat = $('#chat');
 
 const state = { turns: 0, lat: [], vocab: new Set(), fixes: 0,
-                start: Date.now(), seen: new Set(), lastUser: null };
+                start: Date.now(), seen: new Set(), lastUser: null,
+                live: null, liveText: '', voice: false, speak: false,
+                course: null };
 
-const STATUS = { listening: 'hört zu', thinking: 'denkt nach',
-                 speaking: 'spricht', idle: 'bereit', offline: 'getrennt' };
+const STATUS = { listening: 'listening', thinking: 'thinking',
+                 speaking: 'speaking', idle: 'idle', ready: 'ready',
+                 offline: 'offline' };
 
 function setStatus(s) {
   $('#pill').dataset.s = s;
   $('#pillText').textContent = STATUS[s] || s;
+  const busy = s === 'thinking' || s === 'speaking';
+  $('#stop').hidden = !busy;
 }
 
-function atBottom() {
-  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
-}
-function scroll(force) {
-  if (force || atBottom()) chat.scrollTop = chat.scrollHeight;
-}
+function atBottom() { return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80; }
+function scroll(force) { if (force || atBottom()) chat.scrollTop = chat.scrollHeight; }
 
 // German arrives wrapped in guillemets. Build nodes rather than innerHTML so
 // model output can never inject markup.
-function renderText(el, text) {
+function renderText(node, text) {
+  node.textContent = '';
   const re = /«([^»]*)»/g;
   let last = 0, m;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
-    const s = document.createElement('span');
-    s.className = 'de';
-    s.textContent = m[1];
-    el.appendChild(s);
+    if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
+    node.appendChild(el('span', 'de', m[1]));
     last = re.lastIndex;
   }
-  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
 }
 
-function addTurn(role, text, meta) {
-  const stick = atBottom();
-  const el = document.createElement('div');
-  el.className = 'turn ' + role;
-  const b = document.createElement('div');
-  b.className = 'bubble';
-  renderText(b, text);
-  if (meta) {
-    const m = document.createElement('div');
-    m.className = 'meta';
-    m.textContent = meta;
-    b.appendChild(m);
+function thumbs(attachments) {
+  const box = el('div', 'thumbs');
+  for (const a of attachments || []) {
+    for (const n of a.pages || []) {
+      const img = el('img');
+      img.src = `/api/doc/${a.id}/page/${n}`;
+      img.alt = `${a.name} p.${n}`;
+      img.title = `${a.name}, page ${n}`;
+      img.onclick = () => { $('#zoom img').src = img.src; $('#zoom').classList.add('on'); };
+      box.appendChild(img);
+    }
   }
-  el.appendChild(b);
-  chat.appendChild(el);
+  return box;
+}
+$('#zoom').onclick = () => $('#zoom').classList.remove('on');
+
+function addTurn(role, text, meta, attachments) {
+  const stick = atBottom();
+  const row = el('div', 'turn ' + role);
+  const b = el('div', 'bubble');
+  if (attachments?.length) b.appendChild(thumbs(attachments));
+  const body = el('div');
+  renderText(body, text || '');
+  b.appendChild(body);
+  if (meta) b.appendChild(el('div', 'meta', meta));
+  row.appendChild(b);
+  chat.appendChild(row);
   scroll(stick);
   return b;
 }
 
 function addSys(text, cls) {
-  const el = document.createElement('div');
-  el.className = 'sys' + (cls ? ' ' + cls : '');
-  el.textContent = text;
-  chat.appendChild(el);
+  chat.appendChild(el('div', 'sys' + (cls ? ' ' + cls : ''), text));
   scroll(true);
 }
 
@@ -304,83 +520,183 @@ function setMode(mode) {
   }
 }
 
+function setChannels(voice, speak) {
+  state.voice = !!voice; state.speak = !!speak;
+  $('#micBtn').classList.toggle('on', state.voice);
+  $('#speakBtn').classList.toggle('on', state.speak);
+  $('#sayBack').hidden = !state.voice;
+  $('#msg').placeholder = state.voice
+    ? 'Speak, or type in English or German…'
+    : 'Type in English or German…';
+}
+
 function refreshStats() {
   $('#sTurns').textContent = state.turns;
   $('#sFix').textContent = state.fixes;
   $('#sLat').textContent = state.lat.length
-    ? Math.round(state.lat.reduce((a, b) => a + b, 0) / state.lat.length) + 'ms'
+    ? (state.lat.reduce((a, b) => a + b, 0) / state.lat.length / 1000).toFixed(1) + 's'
     : '–';
   $('#sMin').textContent = Math.floor((Date.now() - state.start) / 60000);
 }
 setInterval(refreshStats, 10000);
 
-function renderFix(c) {
-  const d = document.createElement('div');
-  d.className = 'corr';
-  const o = document.createElement('div'); o.className = 'o'; o.textContent = c.original || '';
-  const n = document.createElement('div'); n.className = 'c'; n.textContent = c.corrected || '';
-  d.append(o, n);
-  if (c.explanation) {
-    const e = document.createElement('div'); e.className = 'e';
-    e.textContent = c.explanation; d.appendChild(e);
-  }
-  return d;
+// ---- tabs ----------------------------------------------------------------
+for (const b of document.querySelectorAll('#tabs button')) {
+  b.onclick = () => showTab(b.dataset.t);
+}
+function showTab(t) {
+  for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.t === t);
+  for (const p of document.querySelectorAll('.pane')) p.classList.toggle('on', p.id === 'pane-' + t);
+  if (t === 'review') loadReview();
+  if (t === 'homework') loadHomework();
 }
 
-// ---- repeat-after-me -------------------------------------------------
-
-function showDrill(target) {
-  $('#drillTarget').textContent = target;
-  $('#drillHint').textContent = 'Listening — say it back.';
-  $('#drill').classList.add('on');
+// ---- api -----------------------------------------------------------------
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    method: opts.method || (opts.body ? 'POST' : 'GET'),
+    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = null;
+  try { data = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
+  return data;
 }
 
-function hideDrill() {
-  $('#drill').classList.remove('on');
+// The file goes up as it is: a course book can be 200 MB, and base64 in
+// JSON would hold it in memory three times over on the way.
+async function uploadFile(file) {
+  const name = encodeURIComponent(file.name || 'pasted.png');
+  const r = await fetch(`/api/upload?name=${name}`, { method: 'POST', body: file });
+  let data = null;
+  try { data = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
+  return data;
 }
 
-const VERDICT = {
-  good:  'Got it',
-  close: 'Close — try again',
-  again: 'Have another go',
+// Attachments waiting to be sent, per place they can be sent from.
+function makeTray(boxSel, opts = {}) {
+  const tray = { items: [], box: $(boxSel) };
+  tray.render = () => {
+    tray.box.innerHTML = '';
+    for (const it of tray.items) {
+      const chip = el('div', 'att');
+      chip.appendChild(el('span', '', it.uploading ? `${it.name} …` : it.name));
+      if (it.pages > 1) {
+        const inp = el('input');
+        inp.placeholder = `pages 1-${it.pages}`;
+        inp.title = 'Which pages? e.g. 3 or 2-4 (at most 6)';
+        inp.value = it.range || (it.pages <= 6 ? '' : '1');
+        it.range = inp.value;
+        inp.oninput = () => { it.range = inp.value; };
+        chip.appendChild(inp);
+      }
+      const x = el('button', '', '×');
+      x.title = 'Remove';
+      x.onclick = () => { tray.items = tray.items.filter(i => i !== it); tray.render(); };
+      chip.appendChild(x);
+      tray.box.appendChild(chip);
+    }
+  };
+  tray.add = async files => {
+    for (const f of files) {
+      if (opts.single) tray.items = [];
+      const it = { name: f.name || 'pasted image', uploading: true };
+      tray.items.push(it); tray.render();
+      try {
+        const r = await uploadFile(f);
+        Object.assign(it, { id: r.id, pages: r.pages, name: r.name, uploading: false });
+      } catch (err) {
+        tray.items = tray.items.filter(i => i !== it);
+        addSys('⚠ ' + err.message, 'err');
+      }
+      tray.render();
+    }
+  };
+  tray.refs = () => tray.items.filter(i => i.id).map(i => ({ id: i.id, pages: i.range || '' }));
+  tray.clear = () => { tray.items = []; tray.render(); };
+  return tray;
+}
+
+function pickFiles(cb, multiple = true) {
+  const inp = $('#file');
+  inp.multiple = multiple;
+  inp.onchange = () => { cb([...inp.files]); inp.value = ''; };
+  inp.click();
+}
+
+// ---- composer ------------------------------------------------------------
+const chatTray = makeTray('#pending');
+const msg = $('#msg');
+
+function autosize() {
+  msg.style.height = 'auto';
+  msg.style.height = Math.min(180, msg.scrollHeight) + 'px';
+}
+msg.oninput = autosize;
+msg.onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); }
 };
+$('#send').onclick = sendMsg;
+$('#stop').onclick = () => sendRaw({ action: 'interrupt' });
+$('#attachBtn').onclick = () => pickFiles(f => chatTray.add(f));
 
-// Word-by-word verdict. Each word carries its own status so the learner can
-// see *which* part did not land, rather than just a score they cannot act on.
+msg.addEventListener('paste', e => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) { e.preventDefault(); chatTray.add(files); }
+});
+const compose = $('#compose');
+for (const ev of ['dragenter', 'dragover']) {
+  document.addEventListener(ev, e => { e.preventDefault(); compose.classList.add('drag'); });
+}
+for (const ev of ['dragleave', 'drop']) {
+  document.addEventListener(ev, e => { e.preventDefault(); compose.classList.remove('drag'); });
+}
+document.addEventListener('drop', e => {
+  const files = [...(e.dataTransfer?.files || [])];
+  if (files.length) chatTray.add(files);
+});
+
+function sendMsg() {
+  const text = msg.value.trim();
+  if (chatTray.items.some(i => i.uploading)) { addSys('Still uploading…'); return; }
+  const attachments = chatTray.refs();
+  if (!text && !attachments.length) return;
+  sendRaw({ action: 'say', value: text, attachments });
+  msg.value = ''; autosize();
+  chatTray.clear();
+}
+
+// ---- repeat-after-me -----------------------------------------------------
+const VERDICT = { good: 'Got it', close: 'Close — try again', again: 'Have another go' };
+
 function renderAttempt(e) {
   const stick = atBottom();
-  const row = document.createElement('div');
-  row.className = 'attempt';
+  const row = el('div', 'attempt');
   for (const w of (e.words || [])) {
-    const s = document.createElement('span');
-    s.className = 'w ' + w.status;
-    // A missing word is shown as the word they were meant to say; an extra
-    // one as the word that crept in.
-    s.textContent = w.status === 'extra' ? w.heard : (w.target || w.heard);
-    s.title = w.status === 'missing' ? 'not heard'
-            : w.status === 'extra'   ? 'extra word'
-            : w.status === 'wrong'   ? `heard "${w.heard}"`
-            : w.status;
+    const s = el('span', 'w ' + w.status,
+                 w.status === 'extra' ? w.heard : (w.target || w.heard));
+    s.title = w.status === 'missing' ? 'not heard' : w.status === 'extra' ? 'extra word'
+            : w.status === 'wrong' ? `heard "${w.heard}"` : w.status;
     row.appendChild(s);
   }
-  const sc = document.createElement('span');
-  sc.className = 'score';
-  sc.textContent = `${Math.round((e.score || 0) * 100)}% · ${VERDICT[e.verdict] || e.verdict}`;
-  row.appendChild(sc);
+  row.appendChild(el('span', 'score',
+    `${Math.round((e.score || 0) * 100)}% · ${VERDICT[e.verdict] || e.verdict}`));
   chat.appendChild(row);
   scroll(stick);
-
   $('#drillHint').textContent = VERDICT[e.verdict] || '';
 }
 
+// ---- lesson & goals ------------------------------------------------------
 function renderLesson(course) {
   if (!course) return;
+  state.course = course;
   const sel = $('#chapter');
   sel.innerHTML = '';
   for (const c of course.chapters) {
-    const o = document.createElement('option');
+    const o = el('option', '', `${c.number}. ${c.title}`);
     o.value = c.number;
-    o.textContent = `${c.number}. ${c.title}`;
     sel.appendChild(o);
   }
   if (course.current) sel.value = course.current;
@@ -390,28 +706,291 @@ function renderLesson(course) {
   if (!cur) return;
   const box = $('#lesson');
   box.innerHTML = '';
-  const h = document.createElement('div');
-  h.style.cssText = 'font-weight:600;margin-bottom:6px';
-  h.textContent = `${cur.number}. ${cur.title}`;
-  box.appendChild(h);
+  box.appendChild(el('div', '', `${cur.number}. ${cur.title}`)).style.fontWeight = 600;
   if (cur.grammar?.length) {
-    const g = document.createElement('div');
-    g.className = 'chips';
-    g.style.marginBottom = '8px';
-    for (const item of cur.grammar) {
-      const c = document.createElement('span');
-      c.className = 'chip'; c.textContent = item;
-      g.appendChild(c);
-    }
+    const g = el('div', 'chips'); g.style.margin = '8px 0';
+    for (const item of cur.grammar) g.appendChild(el('span', 'chip', item));
     box.appendChild(g);
   }
-  for (const goal of (cur.can_do || []).slice(0, 5)) {
-    const d = document.createElement('div');
-    d.style.cssText = 'font-size:12.5px;color:var(--muted)';
-    d.textContent = '· ' + goal;
-    box.appendChild(d);
-  }
+  if (cur.topics?.length) box.appendChild(el('div', 'small', cur.topics.join(' · ')));
   $('#lessonBox').hidden = false;
+}
+
+function renderGoals(e) {
+  const box = $('#goals');
+  box.innerHTML = '';
+  $('#goalsBox').hidden = !(e.goals?.length);
+  for (const g of e.goals || []) {
+    const row = el('div', 'goal' + (g.demonstrated ? ' done' : ''));
+    row.appendChild(el('div', 'mark', g.demonstrated ? '✓' : '○'));
+    const t = el('div', 'txt');
+    t.appendChild(el('div', '', g.text));
+    if (g.note) t.appendChild(el('div', 'note',
+      (g.by === 'manual' ? 'marked by you' : g.note)));
+    row.appendChild(t);
+    const check = el('button', 'act', 'Check');
+    check.title = 'Get a small task for this goal';
+    check.onclick = () => sendRaw({ action: 'check_goal', value: g.index });
+    const tick = el('button', 'act', g.demonstrated ? 'Undo' : '✓');
+    tick.title = g.demonstrated ? 'Mark as not done yet' : 'Mark as done yourself';
+    tick.onclick = () => sendRaw({ action: 'mark_goal', value: g.index, done: !g.demonstrated });
+    row.append(check, tick);
+    box.appendChild(row);
+  }
+  $('#chapterDone').hidden = !e.done;
+}
+$('#nextChapter').onclick = () => sendRaw({ action: 'next_chapter' });
+
+function describeClass(c) {
+  const box = el('div', 'card entry');
+  const head = el('div');
+  head.style.fontWeight = 600;
+  head.textContent = c.day + (c.chapter ? ` · Kapitel ${c.chapter}` : '')
+                   + (c.pages ? ` · p. ${c.pages}` : '');
+  box.appendChild(head);
+  if (c.summary) box.appendChild(el('div', '', c.summary));
+  const chips = el('div', 'chips'); chips.style.margin = '6px 0';
+  for (const t of [...(c.topics || []), ...(c.grammar || [])]) chips.appendChild(el('span', 'chip', t));
+  if (chips.children.length) box.appendChild(chips);
+  for (const w of (c.vocab || []).slice(0, 30)) {
+    const r = el('div', 'w');
+    const l = el('span'); renderText(l, `«${w.de}»`);
+    r.append(l, el('span', 'r', (w.en || '') + (w.checked === null ? ' · unchecked' : '')));
+    box.appendChild(r);
+  }
+  if (c.vocab?.some(w => w.checked === null)) {
+    box.appendChild(el('div', 'small warn',
+      'Read from a photo, so these words could not be checked against any text. Glance over them.'));
+  }
+  if (c.dropped?.length) {
+    box.appendChild(el('div', 'small',
+      `Left out ${c.dropped.length} word(s) that appear nowhere in the source: ${c.dropped.slice(0, 6).join(', ')}`));
+  }
+  return box;
+}
+
+function renderClasses(list) {
+  const box = $('#classes');
+  box.innerHTML = '';
+  if (!list?.length) { box.appendChild(el('p', 'empty', 'Nothing logged yet.')); }
+  for (const c of [...(list || [])].reverse()) {
+    const card = describeClass(c);
+    const del = el('button', 'act', 'Delete');
+    del.style.marginTop = '8px';
+    del.onclick = async () => {
+      if (!confirm('Delete this class note?')) return;
+      try { await api(`/api/class/${c.id}`, { method: 'DELETE' }); loadState(); }
+      catch (err) { addSys('⚠ ' + err.message, 'err'); }
+    };
+    card.appendChild(del);
+    box.appendChild(card);
+  }
+  const latest = $('#latestClass');
+  latest.innerHTML = '';
+  if (list?.length) latest.appendChild(describeClass(list[list.length - 1]));
+  else latest.appendChild(el('p', 'empty', 'No class logged yet — see the Class tab.'));
+}
+
+// ---- class logging -------------------------------------------------------
+const classTray = makeTray('#classAtt');
+$('#classAttach').onclick = () => pickFiles(f => classTray.add(f));
+$('#classDay').value = new Date().toISOString().slice(0, 10);
+$('#classSave').onclick = async () => {
+  const btn = $('#classSave');
+  const note = $('#classNote').value.trim();
+  const attachments = classTray.refs();
+  if (!note && !attachments.length) return;
+  btn.disabled = true; btn.textContent = 'Reading…';
+  try {
+    const entry = await api('/api/class', { body: { note, attachments, day: $('#classDay').value } });
+    $('#classNote').value = ''; classTray.clear();
+    await loadState();
+    if (entry.chapter && state.course && entry.chapter !== state.course.current) {
+      if (confirm(`Your class was on chapter ${entry.chapter}. Switch the lesson to it?`)) {
+        sendRaw({ action: 'set_chapter', value: entry.chapter });
+      }
+    }
+  } catch (err) { addSys('⚠ ' + err.message, 'err'); }
+  btn.disabled = false; btn.textContent = 'Save';
+};
+
+// ---- handouts ------------------------------------------------------------
+const hoTray = makeTray('#hoAtt', { single: true });
+$('#hoAttach').onclick = () => pickFiles(f => hoTray.add(f.slice(0, 1)), false);
+$('#hoRead').onclick = async () => {
+  const attachments = hoTray.refs();
+  if (!attachments.length) return;
+  const btn = $('#hoRead');
+  btn.disabled = true; btn.textContent = 'Reading…';
+  try {
+    const deck = await api('/api/handout', { body: { attachments } });
+    hoTray.clear();
+    await loadState();
+    renderDeck(deck);
+  } catch (err) { addSys('⚠ ' + err.message, 'err'); }
+  btn.disabled = false; btn.textContent = 'Read nouns';
+};
+
+function renderDecks(decks) {
+  const box = $('#decks');
+  box.innerHTML = '';
+  if (!decks?.length) { box.appendChild(el('p', 'empty', 'No handouts read yet.')); return; }
+  for (const d of decks) {
+    const row = el('div', 'card');
+    row.style.cursor = 'pointer';
+    row.appendChild(el('div', '', d.name)).style.fontWeight = 600;
+    const c = d.counts;
+    row.appendChild(el('div', 'small',
+      `${c.confirmed} confirmed · ${c.pending} to check` + (c.rejected ? ` · ${c.rejected} removed` : '')));
+    row.onclick = async () => renderDeck(await api(`/api/decks/${d.slug}`));
+    box.appendChild(row);
+  }
+}
+
+const SOURCE = { position: 'page layout', vision: 'reading the page',
+                 lexicon: 'dictionary', learner: 'you' };
+
+function renderDeck(deck) {
+  const box = $('#deckView');
+  box.innerHTML = '';
+  box.appendChild(el('h2', '', deck.name));
+  const pending = deck.entries.map((e, i) => [e, i]).filter(([e]) => e.status === 'pending');
+  if (!pending.length) box.appendChild(el('p', 'small', 'Nothing left to check.'));
+  else box.appendChild(el('p', 'small',
+    'These readings disagree, or only one exists. Pick the right article, or remove the word.'));
+  for (const [e, i] of pending) {
+    const card = el('div', 'card entry');
+    const noun = e.de.split(' ').slice(1).join(' ') || e.de;
+    card.appendChild(el('div', '', noun + (e.en ? ` — ${e.en}` : ''))).style.fontWeight = 600;
+    const readings = Object.entries(e.readings || {})
+      .map(([k, v]) => `${SOURCE[k] || k}: ${v}`).join(' · ');
+    card.appendChild(el('div', 'small', readings || 'no reading'));
+    const btns = el('div'); btns.style.cssText = 'display:flex;gap:6px;margin-top:8px';
+    for (const art of ['der', 'das', 'die']) {
+      const b = el('button', 'act', art);
+      b.onclick = async () => {
+        await api(`/api/decks/${deck.slug}/${i}`, { body: { status: 'confirmed', de: `${art} ${noun}` } });
+        renderDeck(await api(`/api/decks/${deck.slug}`)); loadState();
+      };
+      btns.appendChild(b);
+    }
+    const rm = el('button', 'act', 'Remove');
+    rm.onclick = async () => {
+      await api(`/api/decks/${deck.slug}/${i}`, { body: { status: 'rejected' } });
+      renderDeck(await api(`/api/decks/${deck.slug}`)); loadState();
+    };
+    btns.appendChild(rm);
+    card.appendChild(btns);
+    box.appendChild(card);
+  }
+  const ok = deck.entries.filter(e => e.status === 'confirmed');
+  if (ok.length) {
+    box.appendChild(el('h2', '', `In your flashcards (${ok.length})`)).style.marginTop = '16px';
+    const chips = el('div', 'chips');
+    for (const e of ok) chips.appendChild(el('span', 'chip', e.de));
+    box.appendChild(chips);
+  }
+}
+
+// ---- review --------------------------------------------------------------
+let currentCard = null;
+function setCounts(c) {
+  if (!c) return;
+  $('#rDue').textContent = c.due; $('#rNew').textContent = c.new;
+  const n = c.due + c.new;
+  $('#dueBadge').hidden = !n; $('#dueBadge').textContent = n;
+}
+async function loadReview() {
+  try { const r = await api('/api/review'); setCounts(r.counts); showCard(r.card); }
+  catch (err) { $('#reviewCard').textContent = err.message; }
+}
+function showCard(card) {
+  currentCard = card;
+  const box = $('#reviewCard');
+  box.innerHTML = '';
+  if (!card) {
+    box.appendChild(el('p', 'empty', 'Nothing due. New cards appear as you meet words in lessons and class notes.'));
+    return;
+  }
+  box.appendChild(el('div', 'kind', card.kind === 'mistake' ? 'Fix this sentence' : 'In German'));
+  box.appendChild(el('div', 'front', card.front));
+  const inp = el('input'); inp.placeholder = card.kind === 'mistake' ? 'the corrected sentence' : 'type the German';
+  inp.autocomplete = 'off'; inp.spellcheck = false;
+  const btn = el('button', 'primary', 'Check'); btn.style.marginTop = '8px';
+  const verdict = el('div', 'verdict');
+  let answered = false, next = null;
+  const go = async () => {
+    if (answered) { showCard(next); return; }
+    answered = true; inp.disabled = true;
+    try {
+      const r = await api('/api/review', { body: { card: card.id, given: inp.value } });
+      verdict.className = 'verdict ' + (r.correct ? 'ok' : 'no');
+      renderText(verdict, (r.correct ? '✓ ' : '✗ ') + r.note);
+      next = r.next; setCounts(r.counts);
+      btn.textContent = 'Next';
+      btn.focus();
+    } catch (err) { verdict.textContent = err.message; }
+  };
+  inp.onkeydown = e => { if (e.key === 'Enter') go(); };
+  btn.onclick = go;
+  box.append(inp, btn, verdict);
+  inp.focus();
+}
+
+// ---- homework ------------------------------------------------------------
+async function loadHomework() {
+  try { renderHomework((await api('/api/homework')).homework); }
+  catch (err) { $('#hw').textContent = err.message; }
+}
+function renderHomework(h) {
+  const box = $('#hw');
+  box.innerHTML = '';
+  if (!h) { box.appendChild(el('p', 'empty', 'No homework yet.')); return; }
+  box.appendChild(el('div', 'small', h.title + (h.marked ? ` · ${h.score[0]} of ${h.score[1]} right` : ''))).style.marginBottom = '10px';
+  const inputs = [];
+  h.exercises.forEach((ex, i) => {
+    const d = el('div', 'ex');
+    const p = el('div', 'p'); renderText(p, `${i + 1}. ${ex.prompt}`);
+    d.appendChild(p);
+    if (ex.hint) d.appendChild(el('div', 'small', ex.hint));
+    const ans = h.answers.find(a => a.index === i);
+    const inp = el('input'); inp.value = ans?.given || '';
+    inp.disabled = h.submitted && h.marked;
+    inputs.push(inp); d.appendChild(inp);
+    if (ans && ans.correct !== null && ans.correct !== undefined) {
+      const r = el('div', 'res ' + (ans.correct ? 'ok' : 'no'));
+      renderText(r, (ans.correct ? '✓ ' : '✗ ') + (ans.note || ''));
+      d.appendChild(r);
+    }
+    box.appendChild(d);
+  });
+  if (h.comment) box.appendChild(el('p', 'small', h.comment));
+  if (!h.marked) {
+    const btn = el('button', 'primary', 'Hand in');
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = 'Marking…';
+      try {
+        const r = await api('/api/homework/submit', { body: { id: h.id, answers: inputs.map(i => i.value) } });
+        renderHomework(r.homework); loadState();
+      } catch (err) { addSys('⚠ ' + err.message, 'err'); btn.disabled = false; btn.textContent = 'Hand in'; }
+    };
+    box.appendChild(btn);
+  }
+}
+$('#hwNew').onclick = async () => {
+  const b = $('#hwNew');
+  b.disabled = true; b.textContent = 'Writing…';
+  try { renderHomework((await api('/api/homework/new', { body: {} })).homework); }
+  catch (err) { addSys('⚠ ' + err.message, 'err'); }
+  b.disabled = false; b.textContent = 'Set new homework';
+};
+
+// ---- history -------------------------------------------------------------
+function renderFix(c) {
+  const d = el('div', 'corr');
+  d.append(el('div', 'o', c.original || ''), el('div', 'c', c.corrected || ''));
+  if (c.explanation) d.appendChild(el('div', 'e', c.explanation));
+  return d;
 }
 
 function renderHistory(p) {
@@ -420,62 +999,62 @@ function renderHistory(p) {
   $('#pWords').textContent = p.words;
   const box = $('#habits');
   box.innerHTML = '';
-  if (!p.mistakes?.length) {
-    box.innerHTML = '<p class="empty">Nothing has become a habit yet.</p>';
-  }
+  if (!p.mistakes?.length) box.appendChild(el('p', 'empty', 'Nothing has become a habit yet.'));
   for (const m of (p.mistakes || [])) {
-    const d = document.createElement('div');
-    d.className = 'mistake';
-    const line = document.createElement('div');
-    line.className = 'p';
-    const a = document.createElement('span'); a.className = 'a'; a.textContent = m.wrong;
-    const b = document.createElement('span'); b.className = 'b'; b.textContent = m.right;
-    line.append(a, document.createTextNode(' → '), b);
-    const n = document.createElement('div');
-    n.className = 'n';
-    n.textContent = `${m.count}× · ${m.explanation || 'keeps coming back'}`;
-    d.append(line, n);
+    const d = el('div', 'mistake');
+    const line = el('div', 'p');
+    line.append(el('span', 'a', m.wrong), document.createTextNode(' → '), el('span', 'b', m.right));
+    d.append(line, el('div', 'n', `${m.count}× · ${m.explanation || 'keeps coming back'}`));
     box.appendChild(d);
   }
   $('#histBox').hidden = false;
 }
 
-// The course and the cross-session history are not events — they are true
-// before the first turn, so they are fetched rather than waited for.
 async function loadState() {
   try {
-    const r = await fetch('/api/state');
-    const s = await r.json();
+    const s = await api('/api/state');
     renderLesson(s.course);
     renderHistory(s.progress);
+    renderClasses(s.classes);
+    renderDecks(s.decks);
+    setCounts(s.review);
+    setChannels(s.voice_input, s.speak);
   } catch (err) { /* the socket will fill in the rest */ }
+}
+
+// ---- events --------------------------------------------------------------
+function endLive() {
+  if (state.live) state.live.classList.remove('live');
+  state.live = null; state.liveText = '';
 }
 
 const handlers = {
   status: e => setStatus(e.state),
 
   drill_start: e => {
-    showDrill(e.target);
+    $('#drillTarget').textContent = e.target;
+    $('#drillHint').textContent = 'Listening — say it back.';
+    $('#drill').classList.add('on');
     addSys('repeat after me', 'mode');
   },
   drill_result: e => renderAttempt(e),
-  drill_end: () => hideDrill(),
+  drill_end: () => $('#drill').classList.remove('on'),
 
   config: e => {
-    if (e.chapter) { $('#chapter').value = e.chapter; loadState(); }
+    if (e.chapter && state.course && e.chapter !== state.course.current) loadState();
     if (e.scenarios) {
       const sel = $('#scenario');
       sel.innerHTML = '';
       for (const s of e.scenarios) {
-        const o = document.createElement('option');
+        const o = el('option', '', `${s.title} (${s.min_level}+)`);
         o.value = s.key;
-        o.textContent = `${s.title} (${s.min_level}+)`;
         sel.appendChild(o);
       }
     }
     if (e.scenario) $('#scenario').value = e.scenario;
     if (e.level) $('#level').value = e.level;
     if (e.mode) setMode(e.mode);
+    if ('voice_input' in e) setChannels(e.voice_input, e.speak);
   },
 
   mode_changed: e => {
@@ -485,52 +1064,91 @@ const handlers = {
 
   user_turn: e => {
     state.turns++;
-    state.lastUser = addTurn('user', e.text);
+    state.lastUser = addTurn('user', e.text, e.typed === false ? '🎤' : null, e.attachments);
     refreshStats();
   },
 
+  // The reply streams in a fragment at a time and is replaced by the
+  // finished turn, which is what a late-joining browser gets on replay.
+  tutor_start: () => {
+    endLive();
+    state.live = addTurn('tutor', '');
+    state.live.classList.add('live');
+  },
+  tutor_delta: e => {
+    if (!state.live) { state.live = addTurn('tutor', ''); state.live.classList.add('live'); }
+    const stick = atBottom();
+    state.liveText += e.text;
+    renderText(state.live.firstChild, state.liveText);
+    scroll(stick);
+  },
   tutor_turn: e => {
-    addTurn('tutor', e.text, e.latency_ms ? Math.round(e.latency_ms) + ' ms' : null);
+    const meta = e.latency_ms ? (e.latency_ms / 1000).toFixed(1) + ' s' : null;
+    if (state.live && !e.opener && !e.check) {
+      renderText(state.live.firstChild, e.text || state.liveText);
+      if (meta) state.live.appendChild(el('div', 'meta', meta));
+      endLive();
+    } else {
+      endLive();
+      if (e.text) addTurn('tutor', e.text, meta);
+    }
     if (e.latency_ms) state.lat.push(e.latency_ms);
-    // "Say it back" needs something German to drill.
     if (/«[^»]{6,}»/.test(e.text || '')) $('#sayBack').disabled = false;
     refreshStats();
   },
 
-  // Arrives a beat after the turn — patch it into the bubble that's already there.
   corrections: e => {
+    const fixes = $('#fixes');
     for (const c of (e.items || [])) {
       state.fixes++;
       if (fixes.querySelector('.empty')) fixes.innerHTML = '';
       fixes.prepend(renderFix(c));
       if (state.lastUser) {
-        const f = document.createElement('div');
-        f.className = 'fix';
-        f.innerHTML = '↳ <b></b>';
-        f.querySelector('b').textContent = c.corrected || '';
+        const f = el('div', 'fix', '↳ ');
+        f.appendChild(el('b', '', c.corrected || ''));
+        if (c.explanation) f.appendChild(document.createTextNode(' — ' + c.explanation));
         state.lastUser.appendChild(f);
       }
     }
     for (const w of (e.vocab || [])) {
       if (state.vocab.has(w)) continue;
       state.vocab.add(w);
-      const c = document.createElement('span');
-      c.className = 'chip'; c.textContent = w;
-      vocabBox.appendChild(c);
+      const chip = el('span', 'chip', w);
+      if (e.glossary?.[w]) chip.title = e.glossary[w];
+      $('#vocab').appendChild(chip);
     }
     refreshStats();
   },
 
+  // What the tutor read off the attached page, before teaching from it. Shown
+  // so that a misreading is something the learner can see, not a mystery.
+  page_read: e => {
+    if (!state.lastUser) return;
+    const d = el('details', 'read');
+    d.appendChild(el('summary', '', 'What I read on the page'));
+    const body = el('div');
+    renderText(body, e.text);
+    d.appendChild(body);
+    state.lastUser.appendChild(d);
+  },
+
+  goals: e => renderGoals(e),
+  goal_check: () => { addSys('goal check', 'mode'); msg.focus(); },
+  goal_result: e => addSys(e.passed ? '✓ goal done' : 'not yet', 'mode'),
+  chapter_done: () => { addSys('chapter complete', 'mode'); showTab('lesson'); },
+  class_logged: () => loadState(),
+
   scenario_changed: e => {
     chat.innerHTML = '';
-    state.lastUser = null;
-    hideDrill();
+    state.lastUser = null; endLive();
+    $('#drill').classList.remove('on');
     $('#sayBack').disabled = true;
-    addSys('Neues Szenario: ' + e.scenario);
+    addSys('New lesson: ' + e.scenario);
     loadState();
   },
 
-  error: e => addSys('⚠ ' + e.message, 'err'),
+  notice: e => addSys(e.message),
+  error: e => { endLive(); addSys('⚠ ' + e.message, 'err'); },
   fatal: e => { addSys('⚠ ' + e.message, 'err'); setStatus('offline'); },
   session_end: () => setStatus('idle'),
 };
@@ -538,9 +1156,10 @@ const handlers = {
 let sock, retry = 0;
 function connect() {
   sock = new WebSocket(`ws://${location.host}/ws`);
-
-  sock.onopen = () => { retry = 0; setStatus('idle'); };
-
+  // Status is not replayed — it is a moment, not history — so a page that
+  // connects while the tutor is idle would say "connecting…" until the next
+  // turn. Assume resting; a live status event corrects it within a turn.
+  sock.onopen = () => { retry = 0; setStatus(state.voice ? 'listening' : 'ready'); };
   sock.onmessage = ev => {
     const e = JSON.parse(ev.data);
     if (e.seq !== undefined) {
@@ -549,32 +1168,34 @@ function connect() {
     }
     handlers[e.type]?.(e);
   };
-
   sock.onclose = () => {
     setStatus('offline');
     retry = Math.min(retry + 1, 6);
     setTimeout(connect, retry * 500);
   };
-
   sock.onerror = () => sock.close();
 }
 
-function send(action, value) {
-  if (sock?.readyState === WebSocket.OPEN) {
-    sock.send(JSON.stringify({ action, value }));
-  }
+function sendRaw(obj) {
+  if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify(obj));
+  else addSys('Not connected — try again in a moment.', 'err');
 }
+const send = (action, value) => sendRaw({ action, value });
+
 $('#level').onchange = e => send('set_level', e.target.value);
 $('#scenario').onchange = e => send('set_scenario', e.target.value);
 $('#chapter').onchange = e => send('set_chapter', Number(e.target.value));
 $('#sayBack').onclick = () => send('drill', '');
 $('#drillStop').onclick = () => send('stop_drill', '');
+$('#micBtn').onclick = () => send('set_input', state.voice ? 'text' : 'voice');
+$('#speakBtn').onclick = () => send('set_speak', !state.speak);
 for (const b of document.querySelectorAll('#modes button')) {
   b.onclick = () => send('set_mode', b.dataset.m);
 }
 
 connect();
 loadState();
+msg.focus();
 </script>
 </body>
 </html>

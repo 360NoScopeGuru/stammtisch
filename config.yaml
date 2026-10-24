@@ -8,6 +8,8 @@ paths:
   # the content is copyrighted and this repository is public.
   courses_dir: ./courses
   homework_dir: ./homework   # your answers, personal — gitignored
+  # Class notes, flashcard reviews, objective checks, handout vocabulary.
+  study_dir: ./study         # personal — gitignored
 
 audio:
   # Whisper wants 16 kHz mono. Piper emits at its own rate (see tts.sample_rate).
@@ -57,6 +59,9 @@ llm:
   # analysis is also exactly where the bigger model earns its keep.
   corrector_model: gemma3:12b
   corrector_temperature: 0.1
+  # Typed replies are read, not listened to, so they get more room than
+  # spoken ones — enough for a worked example or a short table of forms.
+  text_max_tokens: 450
 
 tts:
   # One voice per language — the mentor speaks English with German examples,
@@ -71,6 +76,12 @@ tts:
   noise_w: 0.8
 
 tutor:
+  # text  = type to the tutor (the default; no microphone or Whisper needed)
+  # voice = talk to it. Either can be switched on mid-session in the web UI.
+  input: text
+  # Read the tutor's replies aloud. Works with either input — typing while
+  # hearing the German pronounced is the usual way to use it.
+  speak: true
   # mentor   = teaches in English, German examples in «guillemets»
   # practice = German immersion, conversation partner
   mode: mentor
